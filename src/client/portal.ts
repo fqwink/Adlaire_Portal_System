@@ -6,6 +6,9 @@
 
 import type { Category, PortalConfig } from "../types.ts";
 
+// リンクの追加からこの日数以内はNEWバッジを表示する(SPEC.md §5.1.2)。
+const NEW_BADGE_DAYS = 7;
+
 function hexToRgb(hex: string): string | null {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result
@@ -83,14 +86,20 @@ function renderPortal(config: PortalConfig): void {
   const newsList = document.getElementById("news-list")!;
   newsList.innerHTML = "";
 
-  const newsItems = Array.isArray(config.news) ? config.news : [];
+  // 有効期限(expiresAt)を過ぎたお知らせは表示しない(SPEC.md §5.1.2)。
+  const todayIso = now.toISOString().slice(0, 10);
+  const newsItems = (Array.isArray(config.news) ? config.news : []).filter(
+    (item) => !item.expiresAt || item.expiresAt >= todayIso,
+  );
 
   if (newsItems.length > 0) {
     newsArea.style.display = "block";
     newsItems.forEach((item) => {
       const li = document.createElement("li");
-      li.className = "news-item";
-      li.innerHTML = `<span class="news-date">${escapeHtml(item.date)}</span><span class="news-text">${escapeHtml(item.text)}</span>`;
+      li.className = item.pinned ? "news-item news-pinned" : "news-item";
+      const pinBadge = item.pinned ? `<span class="news-pin" title="常に先頭に表示">📌</span>` : "";
+      li.innerHTML =
+        `${pinBadge}<span class="news-date">${escapeHtml(item.date)}</span><span class="news-text">${escapeHtml(item.text)}</span>`;
       newsList.appendChild(li);
     });
   } else {
@@ -127,8 +136,11 @@ function renderPortal(config: PortalConfig): void {
       const clicksHtml = link.clicks
         ? `<span class="card-clicks" title="累計クリック数">👁 ${link.clicks}</span>`
         : "";
+      const isNew = link.addedAt &&
+        (now.getTime() - new Date(link.addedAt).getTime()) / (1000 * 60 * 60 * 24) <= NEW_BADGE_DAYS;
+      const newHtml = isNew ? `<span class="card-new" title="最近追加されたリンク">NEW</span>` : "";
       a.innerHTML =
-        `<span class="card-icon">${escapeHtml(link.icon)}</span><span class="card-name">${escapeHtml(link.name)}</span>${clicksHtml}`;
+        `${newHtml}<span class="card-icon">${escapeHtml(link.icon)}</span><span class="card-name">${escapeHtml(link.name)}</span>${clicksHtml}`;
       a.addEventListener("click", () => reportClick(link.url));
       grid.appendChild(a);
     });

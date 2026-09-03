@@ -59,6 +59,8 @@
     padding: 12px 20px; border-bottom: 1px dashed rgba(0,0,0,0.1); display: flex; gap: 15px; align-items: baseline; font-size: 14px;
   }
   .news-item:last-child { border-bottom: none; }
+  .news-item.news-pinned { background: var(--primary-light); }
+  .news-pin { font-size: 12px; flex-shrink: 0; }
   .news-date { font-weight: bold; color: var(--primary); font-size: 12px; white-space: nowrap; font-family: monospace; }
   .news-text { line-height: 1.5; }
 
@@ -94,6 +96,10 @@
   .card-name mark { background: var(--primary-light); color: var(--primary-dark); border-radius: 3px; padding: 0 1px; }
   .card-clicks {
     position: absolute; top: 10px; right: 12px; font-size: 11px; opacity: 0.55; font-weight: normal;
+  }
+  .card-new {
+    position: absolute; top: 10px; left: 12px; font-size: 10px; font-weight: bold; color: #fff;
+    background: #e74c3c; padding: 2px 6px; border-radius: 10px; letter-spacing: 0.05em;
   }
 
   .footer { margin-top: 80px; font-size: 12px; color: #999; text-align: center; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 30px; }
@@ -139,7 +145,7 @@
 
     <div class="search-wrap"><input type="text" id="search-input" class="search-box" placeholder="🔍  メニューを検索..."></div>
     <div id="content-area"></div>
-    <div class="footer">Powered by <strong>Adlaire Portal System</strong> v0.19</div>
+    <div class="footer">Powered by <strong>Adlaire Portal System</strong> v0.20</div>
   </main>
 </div>
 

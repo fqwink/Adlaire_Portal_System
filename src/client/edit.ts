@@ -69,6 +69,61 @@ let linkCheckResults: Record<string, LinkCheckResult> | null = null;
 let dragCatIdx: number | null = null;
 let dragLink: { cat: number; link: number } | null = null;
 
+// 元に戻す/やり直す(このブラウザタブ内だけの一時的な操作履歴。保存・永続化は行わない。SPEC.md §1.3)。
+const MAX_UNDO_STEPS = 50;
+let undoStack: PortalConfig[] = [];
+let redoStack: PortalConfig[] = [];
+// テキスト入力(タイトル・お知らせ・カテゴリ名・リンク名/URL)を1文字ごとに個別のUndo単位に
+// してしまうと実用にならないため、直近のrenderForm()以降の連続したテキスト編集は1つの
+// Undo単位にまとめる(coalescing)。構造的な操作(追加・削除・並び替え等)は都度個別に記録する。
+let textEditDirty = false;
+
+function cloneConfig(c: PortalConfig): PortalConfig {
+  return JSON.parse(JSON.stringify(c));
+}
+
+// 構造的な変更(追加・削除・並び替え・ピン留め切り替え等)の直前に呼び、元に戻せるようにする。
+function pushUndo(): void {
+  undoStack.push(cloneConfig(config));
+  if (undoStack.length > MAX_UNDO_STEPS) undoStack.shift();
+  redoStack = [];
+}
+
+// テキスト入力の変更をUndo1単位にまとめて記録する。update系関数の先頭で呼ぶ。
+function markTextEdit(): void {
+  if (!textEditDirty) {
+    pushUndo();
+    textEditDirty = true;
+  }
+}
+
+function undo(): void {
+  if (undoStack.length === 0) return;
+  redoStack.push(cloneConfig(config));
+  config = undoStack.pop()!;
+  linkCheckResults = null;
+  renderForm();
+  updatePreview();
+  updateStorageStatus("↩️ 元に戻しました (未保存)");
+}
+
+function redo(): void {
+  if (redoStack.length === 0) return;
+  undoStack.push(cloneConfig(config));
+  config = redoStack.pop()!;
+  linkCheckResults = null;
+  renderForm();
+  updatePreview();
+  updateStorageStatus("↪️ やり直しました (未保存)");
+}
+
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "z") return;
+  e.preventDefault();
+  if (e.shiftKey) redo();
+  else undo();
+});
+
 const resizer = document.getElementById("dragHandle")!;
 const editorPanel = document.getElementById("editorPanel")! as HTMLElement;
 resizer.addEventListener("mousedown", (e) => {
@@ -143,9 +198,18 @@ function escapeHtml(text: unknown): string {
 
 function updatePreview(): void {
   const css = buildPortalCss();
-  const newsHtml = config.news.length > 0
+  // 有効期限切れのお知らせは閲覧画面と同じく表示しない(プレビューと実際の表示を一致させるため)。
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const visibleNews = config.news.filter((n) => !n.expiresAt || n.expiresAt >= todayIso);
+  const newsHtml = visibleNews.length > 0
     ? `<div class="news-box"><div class="news-header">🔔 お知らせ</div><ul class="news-list">
-        ${config.news.map((n) => `<li class="news-item"><span class="news-date">${escapeHtml(n.date)}</span><span>${escapeHtml(n.text)}</span></li>`).join("")}
+        ${
+      visibleNews
+        .map((n) =>
+          `<li class="news-item">${n.pinned ? "📌 " : ""}<span class="news-date">${escapeHtml(n.date)}</span><span>${escapeHtml(n.text)}</span></li>`
+        )
+        .join("")
+    }
       </ul></div>`
     : "";
 
@@ -159,13 +223,21 @@ function updatePreview(): void {
 }
 
 function renderForm(): void {
+  // 新しい描画のたびに、テキスト編集のUndo単位まとめをリセットする(次の編集から新しい単位を開始する)。
+  textEditDirty = false;
+
   const newsListHtml = config.news
     .map(
       (n, idx) => `
       <div class="row">
+        <button class="btn btn-icon ${n.pinned ? "btn-pin active" : "btn-pin"}" onclick="toggleNewsPinned(${idx})" title="常に先頭に表示(ピン留め)">📌</button>
         <input type="text" value="${escapeHtml(n.date)}" style="width:90px;" oninput="updateNews(${idx}, 'date', this.value)">
         <input type="text" value="${escapeHtml(n.text)}" style="flex:1;" oninput="updateNews(${idx}, 'text', this.value)">
         <button class="btn btn-icon btn-red" onclick="delNews(${idx})">🗑️</button>
+      </div>
+      <div class="row news-sub-row">
+        <label style="font-size:10px; color:#999; margin:0; text-transform:none; white-space:nowrap;">📅 有効期限(空欄=無期限):</label>
+        <input type="date" value="${escapeHtml(n.expiresAt || "")}" style="width:150px;" onchange="updateNewsExpiry(${idx}, this.value)">
       </div>`,
     )
     .join("");
@@ -202,19 +274,37 @@ function renderForm(): void {
 }
 
 function update(k: "title" | "themeColor", v: string): void {
+  markTextEdit();
   config[k] = v;
   updatePreview();
 }
-function updateNews(i: number, k: keyof NewsItem, v: string): void {
+function updateNews(i: number, k: "date" | "text", v: string): void {
+  markTextEdit();
   config.news[i][k] = v;
   updatePreview();
 }
+// お知らせを常に先頭に表示する「ピン留め」の切り替え。編集者が管理する共有データであり、
+// 閲覧者個人の状態ではないためSPEC.md §1.3のLocalStorage禁止制約には抵触しない。
+function toggleNewsPinned(i: number): void {
+  pushUndo();
+  config.news[i].pinned = !config.news[i].pinned;
+  renderForm();
+  updatePreview();
+}
+// お知らせの有効期限(空欄は無期限)。この日付を過ぎると閲覧画面から自動的に非表示になる。
+function updateNewsExpiry(i: number, v: string): void {
+  pushUndo();
+  config.news[i].expiresAt = v || undefined;
+  updatePreview();
+}
 function delNews(i: number): void {
+  pushUndo();
   config.news.splice(i, 1);
   renderForm();
   updatePreview();
 }
 function addNews(): void {
+  pushUndo();
   const d = new Date();
   const dateStr = `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, "0")}/${d.getDate().toString().padStart(2, "0")}`;
   config.news.unshift({ date: dateStr, text: "" });
@@ -222,11 +312,13 @@ function addNews(): void {
   updatePreview();
 }
 function updateCat(i: number, v: string): void {
+  markTextEdit();
   config.categories[i].name = v;
   updatePreview();
 }
 function moveCat(i: number, dir: number): void {
   if (i + dir < 0 || i + dir >= config.categories.length) return;
+  pushUndo();
   [config.categories[i], config.categories[i + dir]] = [config.categories[i + dir], config.categories[i]];
   linkCheckResults = null;
   renderForm();
@@ -235,6 +327,7 @@ function moveCat(i: number, dir: number): void {
 function moveLink(c: number, l: number, dir: number): void {
   const links = config.categories[c].links;
   if (l + dir < 0 || l + dir >= links.length) return;
+  pushUndo();
   [links[l], links[l + dir]] = [links[l + dir], links[l]];
   linkCheckResults = null;
   renderForm();
@@ -242,30 +335,43 @@ function moveLink(c: number, l: number, dir: number): void {
 }
 // カテゴリのドラッグ&ドロップ並び替え(SPEC.md §5.2.2)。⬆️⬇️ボタンと同じ並び替え操作の
 // 代替手段であり、保存(saveToServer)するまでデータベースには反映されない。
+// カテゴリの本体(box全体)へのドロップは、リンクをドラッグ中の場合は「そのカテゴリの末尾へ移動」
+// (リンクが1件もない空のカテゴリへ移動する手段として。空カテゴリには行がなくドロップ対象がないため)。
 function onCatDragStart(e: DragEvent, idx: number): void {
   dragCatIdx = idx;
   dragLink = null;
   e.dataTransfer?.setData("text/plain", String(idx));
 }
 function onCatDragOver(e: DragEvent): void {
-  if (dragCatIdx === null) return;
+  if (dragCatIdx === null && !dragLink) return;
   e.preventDefault();
 }
 function onCatDrop(e: DragEvent, idx: number): void {
-  if (dragCatIdx === null) return;
   e.preventDefault();
-  if (dragCatIdx !== idx) {
-    const [moved] = config.categories.splice(dragCatIdx, 1);
-    config.categories.splice(idx, 0, moved);
+  if (dragCatIdx !== null) {
+    if (dragCatIdx !== idx) {
+      pushUndo();
+      const [moved] = config.categories.splice(dragCatIdx, 1);
+      config.categories.splice(idx, 0, moved);
+      linkCheckResults = null;
+      renderForm();
+      updatePreview();
+    }
+    dragCatIdx = null;
+    return;
+  }
+  if (dragLink) {
+    pushUndo();
+    const [moved] = config.categories[dragLink.cat].links.splice(dragLink.link, 1);
+    config.categories[idx].links.push(moved);
     linkCheckResults = null;
     renderForm();
     updatePreview();
+    dragLink = null;
   }
-  dragCatIdx = null;
 }
 
-// リンクのドラッグ&ドロップ並び替え。誤操作防止のため同一カテゴリ内のみ対応する
-// (カテゴリをまたいだ移動は行わない)。
+// リンクのドラッグ&ドロップ並び替え。同一カテゴリ内・カテゴリをまたいだ移動の両方に対応する。
 function onLinkDragStart(e: DragEvent, c: number, l: number): void {
   dragLink = { cat: c, link: l };
   dragCatIdx = null;
@@ -278,10 +384,13 @@ function onLinkDragOver(e: DragEvent): void {
 function onLinkDrop(e: DragEvent, c: number, l: number): void {
   if (!dragLink) return;
   e.preventDefault();
-  if (dragLink.cat === c && dragLink.link !== l) {
-    const links = config.categories[c].links;
-    const [moved] = links.splice(dragLink.link, 1);
-    links.splice(l, 0, moved);
+  e.stopPropagation();
+  if (dragLink.cat !== c || dragLink.link !== l) {
+    pushUndo();
+    const [moved] = config.categories[dragLink.cat].links.splice(dragLink.link, 1);
+    // 同一カテゴリ内で自分より後ろの位置へ移動する場合、削除によって後続の添字が1つずれるため補正する。
+    const insertAt = dragLink.cat === c && dragLink.link < l ? l - 1 : l;
+    config.categories[c].links.splice(insertAt, 0, moved);
     linkCheckResults = null;
     renderForm();
     updatePreview();
@@ -295,6 +404,7 @@ function togglePalette(id: string): void {
   if (palette) palette.style.display = "flex";
 }
 function setIcon(c: number, l: number, ic: string): void {
+  pushUndo();
   config.categories[c].links[l].icon = ic;
   renderForm();
   updatePreview();
@@ -302,6 +412,7 @@ function setIcon(c: number, l: number, ic: string): void {
 }
 function delCat(i: number): void {
   if (confirm("このカテゴリを削除しますか?")) {
+    pushUndo();
     config.categories.splice(i, 1);
     linkCheckResults = null;
     renderForm();
@@ -309,21 +420,25 @@ function delCat(i: number): void {
   }
 }
 function addCat(): void {
+  pushUndo();
   config.categories.push({ name: "新規カテゴリ", links: [] });
   renderForm();
   updatePreview();
 }
 function updateLink(c: number, l: number, k: "name" | "url" | "icon", v: string): void {
+  markTextEdit();
   config.categories[c].links[l][k] = v;
   updatePreview();
 }
 function delLink(c: number, l: number): void {
+  pushUndo();
   config.categories[c].links.splice(l, 1);
   linkCheckResults = null;
   renderForm();
   updatePreview();
 }
 function addLink(c: number): void {
+  pushUndo();
   config.categories[c].links.push({ name: "", url: "", icon: "📄" });
   renderForm();
   updatePreview();
@@ -403,6 +518,7 @@ async function saveToServer(): Promise<void> {
         "⚠️ 保存できませんでした。\n\n" + (conflictData.error || "他の変更と競合しました。") +
           "\n\n「OK」を押すと最新の内容を再取得します。この画面での編集内容は失われます。",
       );
+      pushUndo();
       const loaded = await loadFromServer();
       config = normalizeConfig(loaded);
       linkCheckResults = null;
@@ -475,6 +591,7 @@ function handleImportFile(event: Event): void {
         data.config.themeColor = "#00a968";
       }
 
+      pushUndo();
       config = normalizeConfig(data.config);
 
       config.categories.forEach((cat: Category) => {
@@ -507,6 +624,7 @@ async function resetToDefault(): Promise<void> {
     const res = await fetch("/api/config/reset", { method: "POST" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "リセットに失敗しました");
+    pushUndo();
     currentVersion = parseVersion(res.headers.get("etag"));
     config = normalizeConfig(data);
     linkCheckResults = null;
@@ -568,6 +686,7 @@ async function restoreHistory(id: number): Promise<void> {
     const res = await fetch(`/api/history/${id}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "変更履歴の取得に失敗しました");
+    pushUndo();
     config = normalizeConfig((data as { config: PortalConfig }).config);
     linkCheckResults = null;
     closeHistory();
@@ -579,6 +698,64 @@ async function restoreHistory(id: number): Promise<void> {
   } catch (error) {
     alert("❌ 変更履歴の読み込みに失敗しました。\n\n" + (error as Error).message);
   }
+}
+
+// 「名称, URL」(カンマ区切り、またはExcel等からの貼り付けを想定したタブ区切り)の1行を解析する。
+// 解析できない行(区切り文字がない、名称またはURLが空)はnullを返し、呼び出し側で読み飛ばす。
+function parseBulkImportLine(line: string): { name: string; url: string } | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const sep = trimmed.includes("\t") ? "\t" : ",";
+  const idx = trimmed.indexOf(sep);
+  if (idx === -1) return null;
+  const name = trimmed.slice(0, idx).trim();
+  const url = trimmed.slice(idx + sep.length).trim();
+  if (!name || !url) return null;
+  return { name, url };
+}
+
+function openBulkImport(): void {
+  if (config.categories.length === 0) {
+    alert("先にカテゴリを1つ以上作成してください。");
+    return;
+  }
+  const select = document.getElementById("bulk-import-category") as HTMLSelectElement;
+  select.innerHTML = config.categories
+    .map((cat, idx) => `<option value="${idx}">${escapeHtml(cat.name)}</option>`)
+    .join("");
+  (document.getElementById("bulk-import-text") as HTMLTextAreaElement).value = "";
+  document.getElementById("bulk-import-modal")!.style.display = "flex";
+}
+
+function closeBulkImport(): void {
+  document.getElementById("bulk-import-modal")!.style.display = "none";
+}
+
+// テキストエリアに貼り付けた複数行を一括で解析し、選択したカテゴリの末尾へまとめてリンクを
+// 追加する(SPEC.md §5.2.2)。URLの妥当性チェックは保存時のサーバー側バリデーション(§6)に委ねる。
+function applyBulkImport(): void {
+  const select = document.getElementById("bulk-import-category") as HTMLSelectElement;
+  const catIdx = Number(select.value);
+  const text = (document.getElementById("bulk-import-text") as HTMLTextAreaElement).value;
+  const parsed = text
+    .split("\n")
+    .map(parseBulkImportLine)
+    .filter((x): x is { name: string; url: string } => x !== null);
+
+  if (parsed.length === 0) {
+    alert("追加できる行がありませんでした。「名称, URL」の形式で1行に1件ずつ入力してください。");
+    return;
+  }
+
+  pushUndo();
+  parsed.forEach((item) => {
+    config.categories[catIdx].links.push({ name: item.name, url: item.url, icon: "📄" });
+  });
+  linkCheckResults = null;
+  closeBulkImport();
+  renderForm();
+  updatePreview();
+  updateStorageStatus(`📋 ${parsed.length}件のリンクを一括追加しました (未保存)`);
 }
 
 // パレットの外側クリックで閉じる
@@ -595,6 +772,8 @@ Object.assign(globalThis, {
   setView,
   update,
   updateNews,
+  toggleNewsPinned,
+  updateNewsExpiry,
   delNews,
   addNews,
   updateCat,
@@ -622,6 +801,11 @@ Object.assign(globalThis, {
   openHistory,
   closeHistory,
   restoreHistory,
+  openBulkImport,
+  closeBulkImport,
+  applyBulkImport,
+  undo,
+  redo,
 });
 
 // 初期化: データベースから設定を読み込む
