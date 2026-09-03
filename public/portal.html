@@ -71,10 +71,6 @@
   }
   .search-box:focus { border-color: var(--primary); box-shadow: 0 0 0 5px var(--primary-light); }
 
-  /* ピン留め */
-  .pinned-section { margin-bottom: 60px; scroll-margin-top: 20px; display: none; }
-  .pinned-section .card { border-color: var(--primary); }
-
   /* カテゴリ & カード */
   .category-section { margin-bottom: 60px; scroll-margin-top: 20px; }
   .category-header { display: flex; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid rgba(0,0,0,0.05); }
@@ -125,11 +121,6 @@
 
   <main class="main">
     <div id="error-area" class="error-box">⚠️ 設定データの読み込みに失敗しました。サーバーが起動しているか確認してください。</div>
-    <div id="pinned-area" class="pinned-section">
-      <div class="category-header"><h2 class="category-title">📌 ピン留め</h2></div>
-      <div class="grid" id="pinned-list"></div>
-    </div>
-
     <div id="news-area" class="news-box">
       <div class="news-header">🔔 お知らせ</div>
       <ul class="news-list" id="news-list"></ul>
@@ -137,7 +128,7 @@
 
     <div class="search-wrap"><input type="text" id="search-input" class="search-box" placeholder="🔍  メニューを検索..."></div>
     <div id="content-area"></div>
-    <div class="footer">Powered by <strong>Adlaire Portal System</strong> v5.0</div>
+    <div class="footer">Powered by <strong>Adlaire Portal System</strong> v5.1</div>
   </main>
 </div>
 

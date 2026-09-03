@@ -45,7 +45,6 @@ db.exec(`
     name TEXT NOT NULL,
     url TEXT NOT NULL,
     icon TEXT NOT NULL,
-    pinned INTEGER NOT NULL DEFAULT 0,
     sort_order INTEGER NOT NULL
   );
 `);
@@ -57,12 +56,6 @@ interface SettingsRow {
 interface CategoryRow {
   id: number;
   name: string;
-}
-interface LinkRow {
-  name: string;
-  url: string;
-  icon: string;
-  pinned: number;
 }
 
 export function getConfig(): PortalConfig | null {
@@ -81,15 +74,9 @@ export function getConfig(): PortalConfig | null {
     .map((cat) => {
       const links: LinkItem[] = db
         .prepare(
-          "SELECT name, url, icon, pinned FROM links WHERE category_id = ? ORDER BY sort_order ASC, id ASC",
+          "SELECT name, url, icon FROM links WHERE category_id = ? ORDER BY sort_order ASC, id ASC",
         )
-        .all<LinkRow>(cat.id)
-        .map((row) => ({
-          name: row.name,
-          url: row.url,
-          icon: row.icon,
-          pinned: row.pinned === 1,
-        }));
+        .all<LinkItem>(cat.id);
       return { name: cat.name, links };
     });
 
@@ -110,13 +97,13 @@ const runReplace = db.transaction((config: PortalConfig) => {
   db.exec("DELETE FROM categories");
   const insertCategory = db.prepare("INSERT INTO categories (name, sort_order) VALUES (?, ?)");
   const insertLink = db.prepare(
-    "INSERT INTO links (category_id, name, url, icon, pinned, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO links (category_id, name, url, icon, sort_order) VALUES (?, ?, ?, ?, ?)",
   );
   config.categories.forEach((cat, cIdx) => {
     insertCategory.run(cat.name, cIdx);
     const categoryId = db.lastInsertRowId;
     cat.links.forEach((link, lIdx) => {
-      insertLink.run(categoryId, link.name, link.url, link.icon, link.pinned ? 1 : 0, lIdx);
+      insertLink.run(categoryId, link.name, link.url, link.icon, lIdx);
     });
   });
 });

@@ -44,8 +44,6 @@ deno --version   # v2.9以上推奨
 4. 「💾 保存 (データベースに保存)」ボタンをクリック
 5. `portal.html` を再読み込みすると変更が即座に反映されます
 
-「よく使うリンク」を全閲覧者向けに固定表示したい場合は、各リンクの「📌」ボタンでピン留めできます（§SPEC.md 5.1.2/5.2.2）。
-
 操作の詳細（各ボタンの挙動、バリデーション仕様など）は [`SPEC.md`](./SPEC.md) の「5. 画面仕様」を参照してください。
 
 ## 🔧 開発時のコマンド
@@ -90,12 +88,12 @@ A. `jsr:@db/sqlite`（Deno組み込みではなくFFIベースのSQLiteライブ
 このシステムは独自開発のため、自由にカスタマイズ・配布できます。
 
 ## ℹ️ バージョン情報
-- **Version**: 5.0
+- **Version**: 5.1
 - **Name**: Adlaire Portal System
 
 変更履歴は [`SPEC.md`](./SPEC.md) の「10. 変更履歴」に記載しています。
 
 ---
 
-**Adlaire Portal System** v5.0
+**Adlaire Portal System** v5.1
 © 2026 All Rights Reserved
