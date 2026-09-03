@@ -85,10 +85,7 @@ async function checkOneLink(url: string): Promise<LinkCheckResult> {
       return { url, ok: res.ok, status: res.status, error: null };
     } catch (err) {
       clearTimeout(timeout);
-      const message = err instanceof DOMException && err.name === "AbortError"
-        ? "タイムアウトしました"
-        : (err as Error).message;
-      return { url, ok: false, status: null, error: message };
+      return { url, ok: false, status: null, error: describeFetchError(err) };
     }
   }
   return { url, ok: false, status: null, error: "確認に失敗しました" };
@@ -98,8 +95,34 @@ async function checkOneLink(url: string): Promise<LinkCheckResult> {
 // nullは「まだ一度も取得を試みていない」状態を表す(location未設定の場合はこのままになる)。
 let weatherCache: WeatherInfo | null = null;
 
-async function fetchJsonWithTimeout(url: string): Promise<unknown> {
-  const controller = new AbortController();
+// refreshWeather()の呼び出し世代。地点変更が短時間に連続すると複数回のrefreshWeather()が並行して
+// 実行され得るため、後から開始した呼び出しの結果を優先し、先に開始したが後から完了した(＝古い)
+// 呼び出しの結果でweatherCacheが上書きされないようにする。
+let weatherRefreshSeq = 0;
+// 直前のrefreshWeather()呼び出しが使っているAbortController。新しい呼び出しが始まったら
+// 即座にabortし、どうせ捨てられる古い呼び出しのHTTPリクエストを無駄に継続させない。
+let weatherAbortController: AbortController | null = null;
+
+// refreshWeather()を起動すべきか判定するために直近で使った地点名。weatherCache?.locationは
+// 非同期のフェッチが完了するまで更新されないため、それで判定すると「フェッチ中に地点名を
+// 変更してすぐ元に戻す」操作で2回目の変更が無視されてしまう(1回目のフェッチが古いままの
+// weatherCache?.locationと一致してしまうため)。判定時点で同期的に更新するこの変数を使う。
+let weatherTargetLocation: string | null = null;
+
+function maybeRefreshWeather(location: string | null | undefined): void {
+  const normalized = location ?? null;
+  if (normalized === weatherTargetLocation) return;
+  weatherTargetLocation = normalized;
+  refreshWeather().catch((err) => console.error("天気情報の更新に失敗しました:", err));
+}
+
+// AbortControllerによるタイムアウト付きfetchで、タイムアウト・その他のエラーを人が読めるメッセージに
+// 変換する(checkOneLink()と天気取得の両方で使う共通ロジック)。
+function describeFetchError(err: unknown): string {
+  return err instanceof DOMException && err.name === "AbortError" ? "タイムアウトしました" : (err as Error).message;
+}
+
+async function fetchJsonWithTimeout(url: string, controller: AbortController): Promise<unknown> {
   const timeout = setTimeout(() => controller.abort(), WEATHER_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, { signal: controller.signal });
@@ -115,52 +138,61 @@ async function fetchJsonWithTimeout(url: string): Promise<unknown> {
 // 宛先ホストは固定(open-meteo.com)で、locationは検索クエリ文字列として渡すのみのため、
 // リンクチェック(§4.4)のような宛先ホスト自体を操作されるSSRFのおそれはない。
 async function refreshWeather(): Promise<void> {
+  const seq = ++weatherRefreshSeq;
+  weatherAbortController?.abort();
+  const controller = new AbortController();
+  weatherAbortController = controller;
   const config = getConfig();
   const location = config?.weatherLocation;
   if (!location) {
-    weatherCache = null;
+    if (seq === weatherRefreshSeq) weatherCache = null;
     return;
   }
   try {
     const geo = await fetchJsonWithTimeout(
       `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=ja&format=json`,
+      controller,
     ) as { results?: { latitude: number; longitude: number; name: string }[] };
     const place = geo.results?.[0];
     if (!place) {
+      if (seq === weatherRefreshSeq) {
+        weatherCache = {
+          location,
+          resolvedName: null,
+          tempC: null,
+          weatherCode: null,
+          fetchedAt: new Date().toISOString(),
+          error: "指定された地点が見つかりませんでした",
+        };
+      }
+      return;
+    }
+    const wx = await fetchJsonWithTimeout(
+      `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}` +
+        `&current=temperature_2m,weather_code&timezone=auto`,
+      controller,
+    ) as { current?: { temperature_2m: number; weather_code: number } };
+    if (seq === weatherRefreshSeq) {
+      weatherCache = {
+        location,
+        resolvedName: place.name,
+        tempC: wx.current?.temperature_2m ?? null,
+        weatherCode: wx.current?.weather_code ?? null,
+        fetchedAt: new Date().toISOString(),
+        error: wx.current ? null : "天気データの形式が不正です",
+      };
+    }
+  } catch (err) {
+    if (seq === weatherRefreshSeq) {
       weatherCache = {
         location,
         resolvedName: null,
         tempC: null,
         weatherCode: null,
         fetchedAt: new Date().toISOString(),
-        error: "指定された地点が見つかりませんでした",
+        error: describeFetchError(err),
       };
-      return;
     }
-    const wx = await fetchJsonWithTimeout(
-      `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}` +
-        `&current=temperature_2m,weather_code&timezone=auto`,
-    ) as { current?: { temperature_2m: number; weather_code: number } };
-    weatherCache = {
-      location,
-      resolvedName: place.name,
-      tempC: wx.current?.temperature_2m ?? null,
-      weatherCode: wx.current?.weather_code ?? null,
-      fetchedAt: new Date().toISOString(),
-      error: wx.current ? null : "天気データの形式が不正です",
-    };
-  } catch (err) {
-    const message = err instanceof DOMException && err.name === "AbortError"
-      ? "タイムアウトしました"
-      : (err as Error).message;
-    weatherCache = {
-      location,
-      resolvedName: null,
-      tempC: null,
-      weatherCode: null,
-      fetchedAt: new Date().toISOString(),
-      error: message,
-    };
   }
 }
 
@@ -182,9 +214,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const body = await readJsonBody(req);
       const expectedVersion = parseIfMatch(req);
       const updated = replaceConfig(body, expectedVersion);
-      if (updated.weatherLocation !== weatherCache?.location) {
-        refreshWeather().catch((err) => console.error("天気情報の更新に失敗しました:", err));
-      }
+      maybeRefreshWeather(updated.weatherLocation);
       return jsonResponse(updated, 200, getVersion());
     } catch (err) {
       if (err instanceof VersionConflictError) {
@@ -197,9 +227,7 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   if (url.pathname === "/api/config/reset" && req.method === "POST") {
     try {
       const reset = resetToSeed();
-      if (reset.weatherLocation !== weatherCache?.location) {
-        refreshWeather().catch((err) => console.error("天気情報の更新に失敗しました:", err));
-      }
+      maybeRefreshWeather(reset.weatherLocation);
       return jsonResponse(reset, 200, getVersion());
     } catch (err) {
       return jsonResponse({ error: (err as Error).message }, 500);
@@ -327,6 +355,7 @@ if (LINK_CHECK_INTERVAL_MINUTES > 0) {
 // 天気情報の定期更新(SPEC.md §2.5)。weatherLocationが未設定の場合は何も取得しない(refreshWeather()内で判定)。
 // WEATHER_REFRESH_MINUTES=0 で無効化できる。
 if (WEATHER_REFRESH_MINUTES > 0) {
+  weatherTargetLocation = getConfig()?.weatherLocation ?? null;
   refreshWeather().catch((err) => console.error("初回の天気情報取得に失敗しました:", err));
   setInterval(() => {
     refreshWeather().catch((err) => console.error("天気情報の更新に失敗しました:", err));
