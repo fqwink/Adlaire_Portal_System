@@ -3,19 +3,11 @@
 // edit.html は生成したHTML内で onclick="..." / oninput="..." 属性から
 // 各関数を直接呼び出すため、必要な関数は末尾で globalThis に公開している。
 //
-// サーバー・データベースは存在しない(静的ホスティング)ため、本画面はあくまで
-// ローカルの編集補助ツールという位置づけ。「保存」操作はサーバーへの永続化ではなく、
-// src/portal-config.json を置き換えるためのJSONファイルを生成してダウンロードする。
-// 生成したファイルで src/portal-config.json を上書きし、コミット後に
-// `deno task build` で再ビルド・再デプロイして初めて公開内容に反映される。
+// バックエンド(src/server.ts)のREST APIを通じてSQLiteデータベースに保存する。
 /// <reference lib="dom" />
 /// <reference lib="dom.iterable" />
 
 import type { Category, LinkItem, NewsItem, PortalConfig } from "../types.ts";
-import rawConfig from "../portal-config.json" with { type: "json" };
-import { validateConfig } from "../validate.ts";
-
-const PORTAL_CONFIG = rawConfig as PortalConfig;
 
 function updateStorageStatus(message: string): void {
   const statusEl = document.getElementById("storage-status");
@@ -23,6 +15,8 @@ function updateStorageStatus(message: string): void {
     statusEl.textContent = message;
   }
 }
+
+let config: PortalConfig = { title: "Adlaireポータル", themeColor: "#00a968", news: [], categories: [] };
 
 function normalizeConfig(c: PortalConfig): PortalConfig {
   if (c.news && !Array.isArray(c.news)) {
@@ -32,11 +26,11 @@ function normalizeConfig(c: PortalConfig): PortalConfig {
   return c;
 }
 
-// 編集セッションの初期値は、ビルド時にバンドルされた現在の src/portal-config.json の内容
-let config: PortalConfig = normalizeConfig(structuredClone(PORTAL_CONFIG));
-
-function generateConfigFileSource(c: PortalConfig): string {
-  return JSON.stringify(c, null, 2) + "\n";
+// サーバーAPI(SQLiteデータベース)から設定を読み込む
+async function loadFromServer(): Promise<PortalConfig> {
+  const res = await fetch("/api/config");
+  if (!res.ok) throw new Error("設定データの取得に失敗しました");
+  return res.json();
 }
 
 const ICONS = [
@@ -258,35 +252,36 @@ function addLink(c: number): void {
   updatePreview();
 }
 
-// src/portal-config.json を置き換えるJSONファイルを生成してダウンロードする
-function saveToFile(): void {
+// データベース(SQLite)に保存
+async function saveToServer(): Promise<void> {
+  const saveBtn = document.getElementById("save-btn")! as HTMLButtonElement;
+  saveBtn.disabled = true;
   try {
-    validateConfig(config);
+    const res = await fetch("/api/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "保存に失敗しました");
+    config = normalizeConfig(data);
+    renderForm();
+    updatePreview();
+    updateStorageStatus("✅ 保存完了 (" + new Date().toLocaleTimeString("ja-JP") + ")");
+    alert("✅ データベースに保存しました!\n\nportal.htmlを再読み込みすると変更が反映されます。");
   } catch (error) {
-    alert("❌ 保存できません。入力内容にエラーがあります。\n\n" + (error as Error).message);
-    return;
+    console.error("保存エラー:", error);
+    updateStorageStatus("❌ 保存失敗");
+    alert("❌ 保存に失敗しました。\n\n" + (error as Error).message);
+  } finally {
+    saveBtn.disabled = false;
   }
-
-  const content = generateConfigFileSource(config);
-  const blob = new Blob([content], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "portal-config.json";
-  a.click();
-  URL.revokeObjectURL(url);
-  updateStorageStatus("📄 portal-config.json を生成 (" + new Date().toLocaleTimeString("ja-JP") + ")");
-  alert(
-    "✅ portal-config.json を生成しました!\n\n" +
-      "ダウンロードしたファイルで src/portal-config.json を置き換えてコミットし、\n" +
-      "`deno task build` で再ビルド・再デプロイすると公開内容に反映されます。",
-  );
 }
 
 // JSON形式でエクスポート
 function exportJSON(): void {
   const data = {
-    version: "4.0",
+    version: "5.0",
     exportDate: new Date().toISOString(),
     config: config,
   };
@@ -339,7 +334,7 @@ function handleImportFile(event: Event): void {
       renderForm();
       updatePreview();
       updateStorageStatus("📥 インポート完了 (未保存)");
-      alert("✅ 設定をインポートしました!\n\n「portal-config.jsonを生成」ボタンを押すとファイルに書き出せます。");
+      alert("✅ 設定をインポートしました!\n\n「保存」ボタンを押すとデータベースに反映されます。");
     } catch (error) {
       console.error("インポートエラー:", error);
       updateStorageStatus("❌ インポート失敗");
@@ -350,15 +345,25 @@ function handleImportFile(event: Event): void {
   (event.target as HTMLInputElement).value = ""; // リセット
 }
 
-// 編集内容を破棄し、現在ビルドされている src/portal-config.json の内容に戻す
-function resetToDefault(): void {
-  if (!confirm("⚠️ 編集中の内容を破棄して、現在の portal-config.json の内容に戻しますか?\n\nこの操作は取り消せません。")) {
+// デフォルトに戻す(データベースをシードデータでリセット)
+async function resetToDefault(): Promise<void> {
+  if (!confirm("⚠️ データベースの内容を破棄してデフォルトに戻しますか?\n\nこの操作は取り消せません。")) {
     return;
   }
-  config = normalizeConfig(structuredClone(PORTAL_CONFIG));
-  renderForm();
-  updatePreview();
-  updateStorageStatus("🔄 portal-config.json の内容に戻しました (未保存の編集は破棄されました)");
+
+  try {
+    const res = await fetch("/api/config/reset", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "リセットに失敗しました");
+    config = normalizeConfig(data);
+    renderForm();
+    updatePreview();
+    updateStorageStatus("🔄 デフォルトに戻しました");
+    alert("✅ デフォルト設定に戻しました!\n\nportal.htmlを再読み込みしてください。");
+  } catch (error) {
+    console.error("リセットエラー:", error);
+    alert("❌ リセットに失敗しました。\n\n" + (error as Error).message);
+  }
 }
 
 // パレットの外側クリックで閉じる
@@ -388,14 +393,24 @@ Object.assign(globalThis, {
   delLink,
   togglePinned,
   addLink,
-  saveToFile,
+  saveToServer,
   exportJSON,
   importJSON,
   handleImportFile,
   resetToDefault,
 });
 
-// 初期化: ビルド時にバンドルされた portal-config.json の内容をフォームに反映する
-updateStorageStatus("🗄️ ローカル編集モード (サーバーなし)");
-renderForm();
-updatePreview();
+// 初期化: データベースから設定を読み込む
+(async () => {
+  try {
+    const loaded = await loadFromServer();
+    config = normalizeConfig(loaded);
+    updateStorageStatus("✅ データベースから読み込み");
+  } catch (error) {
+    console.error("読み込みエラー:", error);
+    updateStorageStatus("❌ 読み込みエラー: サーバーに接続できません");
+  }
+  renderForm();
+  updatePreview();
+  (document.getElementById("save-btn")! as HTMLButtonElement).disabled = false;
+})();
