@@ -1,38 +1,44 @@
 # Adlaire Portal System - マスター仕様書
 
 本ドキュメントは Adlaire Portal System の**唯一の仕様の正**（Single Source of Truth）です。
-機能仕様・データモデル・API仕様・画面仕様・セキュリティ仕様など、システムに関するすべての仕様はこのファイルに記載します。
+機能仕様・データモデル・画面仕様・セキュリティ仕様など、システムに関するすべての仕様はこのファイルに記載します。
 他のドキュメント（README等）やコード中のコメントで仕様について触れる場合も、詳細はこのファイルを参照してください。
 仕様を変更する場合は、実装の変更とあわせて必ず本ファイルを更新すること。
 
 - **システム名**: Adlaire Portal System
-- **バージョン**: 3.0
+- **バージョン**: 4.0
 - **最終更新**: 2026-09-03
 
 ---
 
 ## 1. システム概要
 
-Deno + TypeScript + SQLiteデータベースで動作する社内ポータルシステム。
-社内でよく使うリンクをカテゴリ別に整理して一覧表示する「閲覧画面」と、その内容を編集する「編集画面」の2画面で構成される。
-設定データ（タイトル・テーマカラー・お知らせ・カテゴリ・リンク）は SQLite データベースに保存され、
-サーバーを起動しておけば複数のブラウザ・端末から同一のデータを参照できる。
+TypeScriptで実装し、**静的ホスティング**（サーバーサイドの実行環境を持たない配信方式。例: GitHub Pages、
+Cloudflare Pages、Netlify、S3+CloudFront等）を実行環境とする社内ポータルシステム。
+社内でよく使うリンクをカテゴリ別に整理して一覧表示する「閲覧画面」の1画面（+ ローカル編集補助ツール）で構成される。
 
-**すべてのソースコードはTypeScript(`src/`配下)が正本であり、実行時に使用するJavaScript(`dist/`・`public/js/`配下)は
+設定データ（タイトル・テーマカラー・お知らせ・カテゴリ・リンク）は**サーバーもデータベースも介さず**、
+ソースコード内のフラットファイル（`src/portal-config.ts`）として管理する。この内容はビルド時に
+静的なJavaScriptへ直接埋め込まれ（バンドル）、配信後は一切の書き込み・永続化は行われない。
+設定を変更する場合は、`src/portal-config.ts` を編集してビルドし直し、静的ホスティング先へ再デプロイする。
+
+**すべてのソースコードはTypeScript(`src/`配下)が正本であり、配信に使用するJavaScript(`public/js/`配下)は
 ビルド（`deno task build`）によってTypeScriptから生成される。生成されたJavaScriptを直接編集してはならない。**
+ビルドにはDenoを使用するが、Denoは**ビルドツールとしてのみ**用いられ、配信後の実行環境（静的ホスティング）には
+Deno・Node.js等いかなるサーバーサイドランタイムも必要としない。
 
 ### 1.1 対象範囲
 - 閲覧画面（`public/portal.html` + `src/client/portal.ts`）
-- 編集画面（`public/edit.html` + `src/client/edit.ts`）
-- バックエンドサーバー（`src/server.ts`）
-- データアクセス層（`src/db.ts`）
+- 編集補助ツール（`public/edit.html` + `src/client/edit.ts`）※後述、サーバー保存機能は持たない
 - バリデーション（`src/validate.ts`）
 - 共有型定義（`src/types.ts`）
-- 初期シードデータ（`src/seed-data.ts`）
+- 設定データ・フラットファイル（`src/portal-config.ts`）
 
-### 1.2 非対象範囲（現時点で実装しない）
-- ユーザー認証・アクセス制御
-- 複数ユーザーの同時編集の排他制御（競合検知なし。後勝ちで上書きされる）
+### 1.2 非対象範囲（実装しない）
+- サーバーサイドの実行環境（アプリケーションサーバー、データベース、REST API）
+- ユーザー認証・アクセス制御（サーバーが存在しないため、そもそも保護すべきAPIがない）
+- アプリ自体による設定の永続化（ブラウザ内保存を含む）。設定変更は必ずソースコードの編集・再デプロイを伴う
+- 複数編集者間の競合制御（設定はGitなどのバージョン管理システムの通常の運用に委ねる）
 - お気に入り、クリック履歴、アクセス統計、ダークモード手動切り替え（将来拡張候補）
 
 ---
@@ -41,101 +47,86 @@ Deno + TypeScript + SQLiteデータベースで動作する社内ポータルシ
 
 ```
 adlaire_portal/
-├── deno.json               # Denoタスク定義・コンパイラオプション
-├── deno.lock                # 依存関係ロックファイル
-├── src/                      # TypeScript正本 (すべての実装はここを変更する)
-│   ├── types.ts              # 共有型定義 (PortalConfig等)
-│   ├── validate.ts            # 設定データのバリデーション (サーバー側)
-│   ├── seed-data.ts           # 初回起動時の初期データ (シード)
-│   ├── db.ts                  # SQLiteデータアクセス層 (jsr:@db/sqlite)
-│   ├── server.ts               # Denoサーバー本体 (静的配信 + REST API)
+├── deno.json                 # Denoタスク定義 (ビルド/プレビュー/型チェック)・コンパイラオプション
+├── deno.lock                  # 依存関係ロックファイル
+├── src/                        # TypeScript正本 (すべての実装・設定変更はここを編集する)
+│   ├── types.ts                # 共有型定義 (PortalConfig等)
+│   ├── validate.ts              # 設定データのバリデーション (編集画面での利用)
+│   ├── portal-config.ts         # 設定データ・フラットファイル (唯一の設定の正本)
 │   └── client/
-│       ├── portal.ts           # 閲覧画面のクライアントロジック
-│       └── edit.ts              # 編集画面のクライアントロジック
-├── public/
-│   ├── portal.html            # 閲覧画面 (HTML/CSSのみ。ロジックはjs/portal.jsを読み込む)
-│   ├── edit.html               # 編集画面 (同上、js/edit.jsを読み込む)
-│   └── js/                      # ビルド生成物 (自動生成・gitignore対象・直接編集禁止)
+│       ├── portal.ts             # 閲覧画面のクライアントロジック
+│       └── edit.ts                # 編集補助ツールのクライアントロジック
+├── public/                     # 静的ホスティングへそのままデプロイするディレクトリ
+│   ├── portal.html             # 閲覧画面 (HTML/CSSのみ。ロジックはjs/portal.jsを読み込む)
+│   ├── edit.html                # 編集補助ツール (同上、js/edit.jsを読み込む)
+│   └── js/                       # ビルド生成物 (自動生成・gitignore対象・直接編集禁止)
 │       ├── portal.js
 │       └── edit.js
-├── dist/
-│   └── server.js               # ビルド生成物 (src/server.tsのバンドル。自動生成・gitignore対象)
-├── data/
-│   └── portal.db               # SQLiteデータベースファイル (自動生成・gitignore対象)
-├── README.md                   # セットアップ・運用ガイド
-└── SPEC.md                     # 本ファイル (マスター仕様書)
+├── README.md                    # セットアップ・運用ガイド
+└── SPEC.md                      # 本ファイル (マスター仕様書)
 ```
+
+`public/` 配下がそのまま静的ホスティングへアップロードするデプロイ対象一式となる。
 
 ### 2.1 技術スタック
 | 項目 | 内容 |
 |---|---|
 | 言語（正本） | TypeScript（`src/`配下すべて。strict モード） |
-| 実行時生成物 | JavaScript（`deno bundle`によりTypeScriptから生成。`dist/`・`public/js/`配下） |
-| 実行環境 | Deno v2.9以上 |
-| HTTPサーバー | Deno標準API（`Deno.serve`）+ `jsr:@std/http`（静的ファイル配信） |
-| データベース | SQLite（`jsr:@db/sqlite`。FFI経由でネイティブsqlite3を利用） |
+| 配信物 | プレーンJavaScript（`deno bundle`によりTypeScriptから生成。`public/js/`配下） + 静的HTML/CSS |
+| ビルドツール | Deno v2.9以上（配信・実行環境としては不使用。ビルド時のみ必要） |
+| 実行環境（本番） | 任意の静的ホスティングサービス（GitHub Pages、Cloudflare Pages、Netlify、S3等。特定サービスに依存しない） |
+| サーバー / API / データベース | なし |
 | フロントエンド | TypeScriptをビルドしたプレーンJavaScript（フレームワーク不使用） |
-| 通信 | フロントエンド ⇔ バックエンド間はJSON REST API (`fetch`) |
+| データの持ち方 | ビルド時にJavaScriptへ静的に埋め込み（`src/portal-config.ts` → `public/js/portal.js` / `public/js/edit.js`）。実行時の通信は発生しない |
 
-### 2.2 ビルド・起動方法
+### 2.2 ビルド・プレビュー方法
 ```bash
-deno task build   # src/*.ts から dist/server.js, public/js/*.js を生成
-deno task start   # dist/server.js を実行 (既定ポート: 3000)
-deno task serve   # build + start をまとめて実行
-
-PORT=8080 deno task start   # ポートを変更する場合
-
-deno task dev      # ビルドせず src/server.ts を直接実行 + ファイル変更監視 (開発用)
-deno task check    # 型チェックのみ実行 (ビルドしない)
+deno task build     # src/*.ts から public/js/*.js を生成
+deno task preview   # build を実行した上で、public/ をローカルの静的サーバーで配信 (開発確認用。既定ポート:3000)
+deno task check      # 型チェックのみ実行 (ビルドしない)
 ```
-初回起動時、`data/portal.db` が存在しなければ自動生成し、`src/seed-data.ts` の内容で初期化する（`src/db.ts` の `ensureSeeded()`）。
+`deno task preview` はあくまでローカルでの動作確認用の簡易サーバーであり、本番の実行環境ではない。
+本番では `deno task build` 後の `public/` ディレクトリ一式を任意の静的ホスティングサービスへアップロードする。
 
 > ℹ️ `src/client/portal.ts` / `src/client/edit.ts` はブラウザで実行されるコードのため、
-> `deno bundle --platform browser --format iife` でプレーンJavaScript（IIFE形式）にコンパイルし、
-> `public/js/portal.js` / `public/js/edit.js` として出力する。
-> `src/server.ts` / `src/db.ts` はDenoランタイム上で実行されるコードのため、
-> `deno bundle --platform deno` で `dist/server.js` に単一ファイルとしてバンドルする。
+> `deno bundle --platform browser --format iife` でプレーンJavaScript（IIFE形式、依存モジュール込みの単一ファイル）に
+> コンパイルし、`public/js/portal.js` / `public/js/edit.js` として出力する。
+> `src/portal-config.ts` の内容はこの際に両ファイルへ静的な値としてバンドルされる。
 
 ---
 
-## 3. データモデル / DBスキーマ
+## 3. データモデル
 
-SQLite (`data/portal.db`) に以下4テーブルで正規化して保存する。
+サーバー・データベースを持たないため、データモデルは`src/types.ts`で定義するTypeScriptの型がそのまま唯一の構造定義となる。
 
-### 3.1 `settings`（1行のみ）
-| カラム | 型 | 制約 | 説明 |
-|---|---|---|---|
-| id | INTEGER | PRIMARY KEY, CHECK(id=1) | 常に1固定（単一設定のみ許容） |
-| title | TEXT | NOT NULL | ポータルのタイトル |
-| theme_color | TEXT | NOT NULL | テーマカラー（`#rrggbb`形式） |
+```typescript
+interface NewsItem {
+  date: string;
+  text: string;
+}
 
-### 3.2 `news`
-| カラム | 型 | 制約 | 説明 |
-|---|---|---|---|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT | |
-| date | TEXT | NOT NULL | 表示用の日付文字列（形式自由、例: `2026/02/14`） |
-| text | TEXT | NOT NULL | お知らせ本文 |
-| sort_order | INTEGER | NOT NULL | 表示順（昇順） |
+interface LinkItem {
+  name: string;
+  url: string;
+  icon: string;
+}
 
-### 3.3 `categories`
-| カラム | 型 | 制約 | 説明 |
-|---|---|---|---|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT | |
-| name | TEXT | NOT NULL | カテゴリ名 |
-| sort_order | INTEGER | NOT NULL | 表示順（昇順） |
+interface Category {
+  name: string;
+  links: LinkItem[];
+}
 
-### 3.4 `links`
-| カラム | 型 | 制約 | 説明 |
-|---|---|---|---|
-| id | INTEGER | PRIMARY KEY AUTOINCREMENT | |
-| category_id | INTEGER | NOT NULL, REFERENCES categories(id) ON DELETE CASCADE | 所属カテゴリ |
-| name | TEXT | NOT NULL | リンク名 |
-| url | TEXT | NOT NULL | リンクURL |
-| icon | TEXT | NOT NULL | 絵文字アイコン1文字 |
-| sort_order | INTEGER | NOT NULL | カテゴリ内での表示順（昇順） |
+interface PortalConfig {
+  title: string;
+  themeColor: string;
+  news: NewsItem[];
+  categories: Category[];
+}
+```
 
-### 3.5 論理データ構造（API入出力形式）
-API（`/api/config`）は上記テーブルを以下のJSON構造に組み立てて返す。編集画面の内部状態（`config`変数）もこの形式に一致する。
+`src/portal-config.ts` は `PortalConfig` 型の値を1つエクスポートする（`export const PORTAL_CONFIG: PortalConfig = {...}`）。
+これがシステム全体で唯一の設定データであり、`src/client/portal.ts` と `src/client/edit.ts` の双方がビルド時にこの値を直接importし、
+バンドルする。
 
 ```json
 {
@@ -157,50 +148,28 @@ API（`/api/config`）は上記テーブルを以下のJSON構造に組み立て
 
 ---
 
-## 4. API仕様
+## 4. 設定データの変更手順
 
-すべてJSON形式。ベースパスなし（サーバールート直下）。
+サーバー・データベース・保存APIが存在しないため、設定内容の変更は次のいずれかの手順で行う。
 
-### 4.1 `GET /api/config`
-現在の設定を取得する。
+### 4.1 直接編集（推奨・基本手順）
+1. `src/portal-config.ts` を直接編集する
+2. `deno task check` で型チェックする
+3. `deno task build` でビルドし、`deno task preview` で見た目を確認する
+4. 変更を通常のGitワークフローでコミットし、静的ホスティング先へ再デプロイする
 
-- **リクエストボディ**: なし
-- **成功時**: `200 OK`、上記「論理データ構造」のJSONを返す
-- **失敗時**: 設定データが存在しない場合 `404 Not Found`、`{ "error": "設定データが見つかりません" }`
-  - 通常は初回起動時にシードデータで自動初期化されるため発生しない
+### 4.2 編集補助ツール（`public/edit.html`）を使う場合
+GUIでの編集内容を確認しながら作業したい場合、`edit.html`（§5.2）を使って`src/portal-config.ts`相当の
+TypeScriptファイルを生成できる。
 
-### 4.2 `PUT /api/config`
-設定全体を置き換える（部分更新は不可。常に全項目を送信する）。
+1. `deno task preview` を実行し、ブラウザで `edit.html` を開く
+2. フォームでタイトル・お知らせ・カテゴリ・リンクを編集する（画面右側にライブプレビューが表示される）
+3. 「📄 portal-config.ts を生成」ボタンで、編集内容を反映したTypeScriptファイルをダウンロードする
+4. ダウンロードしたファイルの中身で `src/portal-config.ts` を置き換える
+5. §4.1 の手順3.〜4.（ビルド確認・コミット・再デプロイ）を行う
 
-- **リクエストボディ**: 「論理データ構造」と同じJSON
-- **処理**: サーバー側で §4.4 のバリデーションを実施した後、`settings`を更新し、`news`/`categories`/`links`を全削除してから再挿入する（トランザクション内で実行、失敗時はロールバック）
-- **成功時**: `200 OK`、更新後の設定をJSONで返す
-- **失敗時**: バリデーションエラー時は `400 Bad Request`、`{ "error": "<エラーメッセージ>" }`
-
-### 4.3 `POST /api/config/reset`
-データベースの内容を `src/seed-data.ts` の初期データにリセットする（`PUT`と同じ置き換え処理をシードデータに対して実行）。
-
-- **リクエストボディ**: なし
-- **成功時**: `200 OK`、リセット後の設定をJSONで返す
-- **失敗時**: `500 Internal Server Error`、`{ "error": "<エラーメッセージ>" }`
-
-### 4.4 サーバー側バリデーション仕様（`src/validate.ts` `validateConfig()`）
-`PUT /api/config` および `reset` 実行時、以下を満たさない場合はエラーとして拒否する。
-
-| 項目 | 検証内容 |
-|---|---|
-| `title` | 文字列であり、かつ空でないこと |
-| `themeColor` | `^#[0-9A-Fa-f]{6}$` に一致すること（例: `#00a968`） |
-| `categories` | 配列であること |
-| `categories[].name` | 文字列であること |
-| `categories[].links` | 配列であること |
-| `categories[].links[].name` | 文字列であること |
-| `categories[].links[].icon` | 文字列であること |
-| `categories[].links[].url` | §5.3「URL検証仕様」を満たすこと |
-| `news` | 配列であること（省略時は空配列として扱う） |
-| `news[].date` / `news[].text` | いずれも文字列であること |
-
-いずれかの検証に失敗した場合、当該項目を特定するメッセージ（例: `カテゴリ[0]のリンク[0]のURLが不正です`）とともに例外を投げ、APIは`400`を返す。
+この画面で行った編集は、ファイルを生成してダウンロードするまではブラウザのタブ内メモリ上にのみ存在し、
+どこにも自動保存されない（タブを閉じる、再読み込みすると失われる）。
 
 ---
 
@@ -211,7 +180,6 @@ API（`/api/config`）は上記テーブルを以下のJSON構造に組み立て
 #### 5.1.1 画面構成
 - **サイドバー**: ロゴ、今日の日付、カテゴリ一覧ナビゲーション（各カテゴリのリンク件数バッジ付き）
 - **メインエリア**:
-  - エラー表示欄（API取得失敗時のみ表示）
   - お知らせ欄（お知らせが1件以上ある場合のみ表示）
   - 検索ボックス
   - カテゴリ別リンクカードのグリッド表示
@@ -220,7 +188,7 @@ API（`/api/config`）は上記テーブルを以下のJSON構造に組み立て
 #### 5.1.2 機能仕様
 | 機能 | 仕様 |
 |---|---|
-| データ読み込み | ページロード時に `GET /api/config` をfetchし、取得したJSONを`renderPortal()`でDOMに描画する。失敗時はエラー欄を表示する |
+| データ表示 | ビルド時に `src/portal-config.ts` の内容が `public/js/portal.js` へ静的にバンドルされており、ページ読み込み時に即座に`renderPortal()`でDOMに描画する。通信は発生しないため読み込み失敗は起こり得ない |
 | ナビゲーション | サイドバーのカテゴリリンクをクリックすると、該当セクションへスムーズスクロールする（アンカーリンクの既定動作は`preventDefault`） |
 | お知らせ表示 | `news`配列を日付+本文で一覧表示。0件の場合は欄ごと非表示。リスト部分は最大高さ120pxでスクロール可能 |
 | テーマカラー反映 | `themeColor`からCSS変数 `--primary` を設定し、そこから `--primary-light`（10%不透明度相当のrgba）と`--primary-dark`（RGB各値-30）を自動算出してCSS変数に反映する |
@@ -230,30 +198,33 @@ API（`/api/config`）は上記テーブルを以下のJSON構造に組み立て
 | ダークモード | `prefers-color-scheme: dark` により自動的に配色を切り替える（手動切り替えは未実装） |
 | レスポンシブ | 画面幅768px以下でサイドバーが横並びのスクロール可能なタブ形式に変化する |
 
-### 5.2 編集画面（`public/edit.html`）
+### 5.2 編集補助ツール（`public/edit.html`）
+
+サーバーを持たないため、この画面は「設定を保存する画面」ではなく「`src/portal-config.ts`に貼り戻すための
+TypeScriptファイルをGUI操作で組み立てる、ローカル専用の補助ツール」という位置づけである。
 
 #### 5.2.1 画面構成
 - **左ペイン（エディタパネル）**: 幅可変（ドラッグでリサイズ可能、最小300px）
-  - ヘッダー: タイトル、バージョンバッジ、DB接続ステータス表示
+  - ヘッダー: タイトル、バージョンバッジ、編集モード表示（常に「ローカル編集モード」）
   - フォームエリア: 基本設定・お知らせ・カテゴリ/リンクの編集フォーム
-  - フッター: 保存・エクスポート・インポート・リセットの各ボタン
+  - フッター: ファイル生成・エクスポート・インポート・破棄の各ボタン
 - **右ペイン（プレビューパネル）**: `iframe`によるライブプレビュー（PC表示/スマホ表示のトグル切り替え可）
 
 #### 5.2.2 機能仕様
 | 機能 | 仕様 |
 |---|---|
-| 初期読み込み | ページロード時に `GET /api/config` を非同期fetchし、`config`変数に格納。取得完了までフォームは「読み込み中...」表示、保存ボタンは無効化。失敗時はステータス欄にエラー表示 |
-| 基本設定編集 | タイトル（テキスト入力）、テーマカラー（カラーピッカー）を編集すると、即座に`config`とプレビューに反映（自動保存はされない） |
+| 初期表示 | ページ読み込み時、ビルドされている `src/portal-config.ts` の内容（バンドル済みの`PORTAL_CONFIG`）をそのまま編集フォームの初期値とする。通信は発生しない |
+| 基本設定編集 | タイトル（テキスト入力）、テーマカラー（カラーピッカー）を編集すると、即座にフォーム内の状態とプレビューに反映される |
 | お知らせ管理 | 追加（先頭に本日日付で追加）・削除・日付/本文のインライン編集 |
 | カテゴリ管理 | 追加（末尾に「新規カテゴリ」を追加）・削除（確認ダイアログあり）・名称編集・上下並び替え |
 | リンク管理 | 追加（カテゴリ末尾に空リンクを追加）・削除・名称/URL編集・上下並び替え |
 | アイコン選択 | アイコン欄クリックでパレット（30種類の絵文字）をポップアップ表示し選択。パレット外クリックで自動的に閉じる |
-| ライブプレビュー | `config`が変更されるたびに、閲覧画面相当のHTML/CSSを組み立てて`iframe.srcdoc`に反映（実際のサーバーレンダリングとは別ロジックで簡易再現） |
+| ライブプレビュー | 編集内容が変更されるたびに、閲覧画面相当のHTML/CSSを組み立てて`iframe.srcdoc`に反映（実際の閲覧画面とは別ロジックで簡易再現） |
 | プレビュー表示切替 | 「💻 PC」「📱 スマホ」ボタンで`iframe`の表示サイズを切り替え（PC: 100%幅、スマホ: 375×750pxの端末フレーム風表示） |
-| 保存 | 「💾 保存」ボタンで現在の`config`を`PUT /api/config`に送信。サーバーバリデーション成功時は返却データで`config`を更新し、成功アラートを表示。失敗時はエラー内容をアラート表示し、`config`は変更しない |
-| JSONエクスポート | 現在の`config`を`{version, exportDate, config}`形式のJSONファイルとしてダウンロード（クライアント側のみで完結、DBへの影響なし） |
-| JSONインポート | エクスポート形式のJSONファイルを読み込み、クライアント側で簡易バリデーション（§5.2.3参照）した上で`config`を置き換える。**この時点ではDBには反映されない**。反映するには別途「保存」を押す必要がある |
-| デフォルトに戻す | 確認ダイアログの上で `POST /api/config/reset` を呼び出し、DBをシードデータにリセットする。取り消し不可 |
+| ファイル生成 | 「📄 portal-config.ts を生成」ボタンで、§6のバリデーションを実施した上で、編集内容を`src/portal-config.ts`と同一フォーマットのTypeScriptソースとして組み立て、`portal-config.ts`という名前でダウンロードする。バリデーションに失敗した場合はエラー内容をアラート表示し、ファイルは生成しない |
+| JSONエクスポート | 現在の編集内容を`{version, exportDate, config}`形式のJSONファイルとしてダウンロード（バックアップ・共有用） |
+| JSONインポート | エクスポート形式のJSONファイルを読み込み、クライアント側で簡易バリデーション（§5.2.3参照）した上でフォームの状態を置き換える |
+| 編集内容の破棄 | 確認ダイアログの上で、フォームの状態をビルドされている`src/portal-config.ts`の内容（初期表示時点の値）に戻す |
 
 #### 5.2.3 クライアント側インポートバリデーション（`handleImportFile()`）
 | 項目 | 検証内容 | 不正時の挙動 |
@@ -266,63 +237,90 @@ API（`/api/config`）は上記テーブルを以下のJSON構造に組み立て
 | `categories[].name` | 未設定の場合 `"未設定"` に補正 | 処理は継続 |
 | `categories[].links` | 配列でない場合は`[]`に補正 | 処理は継続 |
 
-なお、インポートされた内容は「保存」時にサーバー側バリデーション（§4.4）で再検証されるため、クライアント側のチェックをすり抜けた不正なURL等はサーバー側で拒否される。
+インポートされた内容は「ファイル生成」時に §6 のバリデーション（`src/validate.ts` `validateConfig()`）で再検証されるため、
+クライアント側のチェックをすり抜けた不正なURL等は、ファイル生成時に拒否される。
 
 ---
 
-## 6. セキュリティ仕様
+## 6. バリデーション仕様（`src/validate.ts`）
 
-### 6.1 XSS対策
-- 閲覧画面・編集画面ともに、ユーザー入力に由来する値（タイトル・お知らせ・カテゴリ名・リンク名・アイコン・URL文字列）をHTMLに埋め込む際は、必ず`escapeHtml()`関数（`&<>"'`をHTMLエンティティに変換）を通す
-- `escapeHtml()`は両画面それぞれの`<script>`内に同一実装を保持する（共有モジュール化はしていない）
+`public/edit.html` の「ファイル生成」実行時に、以下を満たさない場合はファイルを生成せずエラーを表示する
+（`validateConfig()`）。サーバーが存在しないため、これは実行時の入力保護ではなく、開発者が`portal-config.ts`を
+生成する際の誤り検出を目的とする。
 
-### 6.2 URL検証
-- **フロントエンド**（`src/client/portal.ts` `sanitizeUrl()`）: `http://`または`https://`で始まるURL、あるいは`/`または`.`で始まる相対パスのみそのまま許可。それ以外（`javascript:`スキーム等）は`#`に置き換える
-- **バックエンド**（`src/validate.ts` `isValidUrl()`）: 同等の基準（`^https?:\/\//i` または `^[./]`）で検証し、満たさない場合は`PUT /api/config`を`400`で拒否する
+| 項目 | 検証内容 |
+|---|---|
+| `title` | 文字列であり、かつ空でないこと |
+| `themeColor` | `^#[0-9A-Fa-f]{6}$` に一致すること（例: `#00a968`） |
+| `categories` | 配列であること |
+| `categories[].name` | 文字列であること |
+| `categories[].links` | 配列であること |
+| `categories[].links[].name` | 文字列であること |
+| `categories[].links[].icon` | 文字列であること |
+| `categories[].links[].url` | §7.2「URL検証仕様」を満たすこと |
+| `news` | 配列であること（省略時は空配列として扱う） |
+| `news[].date` / `news[].text` | いずれも文字列であること |
 
-### 6.3 認証・アクセス制御
-- 本システムには**認証機能は実装されていない**
-- `PUT /api/config` および `POST /api/config/reset` は、APIにアクセスできる者であれば誰でも実行可能
-- そのため、**信頼できるネットワーク内（社内LANなど）でのみ運用すること**を前提とする
-- インターネットに公開する場合は、リバースプロキシでのBASIC認証やVPN経由でのアクセス制限など、システム外側での保護を別途講じること（本システム自体には実装しない）
-
-### 6.4 入力サイズ制限
-- APIリクエストボディは `Content-Length` ヘッダーをもとに最大1MBに制限される（`src/server.ts` `readJsonBody()`）
+いずれかの検証に失敗した場合、当該項目を特定するメッセージ（例: `カテゴリ[0]のリンク[0]のURLが不正です`）とともに例外を投げる。
 
 ---
 
-## 7. 非機能仕様
+## 7. セキュリティ仕様
+
+### 7.1 XSS対策
+- 閲覧画面・編集補助ツールともに、設定データに由来する値（タイトル・お知らせ・カテゴリ名・リンク名・アイコン・URL文字列）を
+  HTMLに埋め込む際は、必ず`escapeHtml()`関数（`&<>"'`をHTMLエンティティに変換）を通す
+- `escapeHtml()`は両画面それぞれの`src/client/*.ts`内に同一実装を保持する（共有モジュール化はしていない）
+
+### 7.2 URL検証
+- **閲覧画面**（`src/client/portal.ts` `sanitizeUrl()`）: `http://`または`https://`で始まるURL、あるいは`/`または`.`で始まる相対パスのみそのまま許可。それ以外（`javascript:`スキーム等）は`#`に置き換える
+- **編集補助ツール**（`src/validate.ts` `isValidUrl()`）: 同等の基準（`^https?:\/\//i` または `^[./]`）で、ファイル生成前に検証する
+
+### 7.3 認証・アクセス制御
+- 本システムにはサーバー・APIが存在しないため、認証の対象そのものが存在しない
+- `public/edit.html` はローカルでの編集補助ツールであり、公開環境でホストする必要はない（`public/portal.html` のみを
+  デプロイし、`edit.html`は開発者のローカル環境（`deno task preview`）でのみ利用する運用を推奨する）
+- 設定データの変更はソースコードの編集・コミット・デプロイという通常の開発フローを経るため、変更権限の管理は
+  Gitリポジトリのアクセス権・CI/CDのデプロイ権限に委ねられる
+
+### 7.4 依存の最小化
+- 配信物（`public/`配下）は静的なHTML/CSS/JavaScriptのみで構成され、外部サービス・APIへの通信は行わない
+
+---
+
+## 8. 非機能仕様
 
 | 項目 | 仕様 |
 |---|---|
-| 対応Denoバージョン | v2.9以上 |
-| ソースの正本 | TypeScript（`src/`配下）。JavaScript（`dist/`・`public/js/`配下）は `deno task build` によるビルド生成物であり、直接編集しない |
+| 対応Denoバージョン（ビルド時のみ） | v2.9以上 |
+| 外部依存 | なし（`src/`配下は相対importのみで完結し、npm/jsrパッケージへの依存を持たない） |
+| ソースの正本 | TypeScript（`src/`配下）。JavaScript（`public/js/`配下）は `deno task build` によるビルド生成物であり、直接編集しない |
 | 型チェック | `deno task check`（`deno check`）で`strict`モードの型チェックを実施する |
-| ポート | 環境変数`PORT`で指定可能。既定値は`3000` |
-| データ永続化 | SQLiteファイル（`data/portal.db`）。プロセス再起動後もデータは保持される |
-| SQLiteドライバ | `jsr:@db/sqlite`（FFI経由でネイティブsqlite3を利用。`--allow-ffi`が必要） |
-| 同時実行 | `Database`は同期API。単一プロセス内での逐次アクセスを前提とし、大規模な同時書き込み負荷は想定していない |
-| ロギング | サーバー起動時に起動メッセージを標準出力に出力する程度。アクセスログ・エラーログの永続化は未実装 |
-| ブラウザ対応 | モダンブラウザ（`fetch`、CSS変数、`prefers-color-scheme`に対応したもの） |
+| 実行環境（本番） | 任意の静的ホスティングサービス。サーバーサイドの実行環境・データベースを一切必要としない |
+| データ永続化 | なし。設定はソースコード（`src/portal-config.ts`）そのものであり、変更にはビルド・再デプロイを要する |
+| ロギング | なし（静的配信のため、アプリケーション側でのログ出力機構を持たない） |
+| ブラウザ対応 | モダンブラウザ（CSS変数、`prefers-color-scheme`、`structuredClone`に対応したもの） |
 
 ---
 
-## 8. 用語集
+## 9. 用語集
 
 | 用語 | 説明 |
 |---|---|
-| 設定（config） | タイトル・テーマカラー・お知らせ・カテゴリ・リンクをまとめた1つのJSONオブジェクト。システム全体で単一のみ存在する |
-| シードデータ | 初回起動時にDBが空の場合に投入される初期設定（`src/seed-data.ts`） |
+| 設定（config） | タイトル・テーマカラー・お知らせ・カテゴリ・リンクをまとめた1つのオブジェクト。システム全体で単一のみ存在する |
+| フラットファイル | 設定データを保持する`src/portal-config.ts`を指す。データベースを使わず、ソースコード中の1ファイルが設定の唯一の実体であることを表す |
 | カテゴリ | リンクをグループ化する単位。名称と表示順、複数のリンクを持つ |
 | リンク | カテゴリに属する個別の外部/内部URL。名称・URL・アイコンを持つ |
-| 正本（ソースオブトゥルース） | 人間が直接編集する原本のファイル。本システムでは仕様の正本は本ファイル（SPEC.md）、実装の正本は`src/`配下のTypeScriptファイルを指す |
+| 正本（ソースオブトゥルース） | 人間が直接編集する原本。本システムでは仕様の正本は本ファイル（SPEC.md）、実装の正本は`src/`配下のTypeScriptファイル、設定データの正本は`src/portal-config.ts`を指す |
+| 編集補助ツール | `public/edit.html`を指す。設定を「保存」する機能ではなく、`portal-config.ts`の生成を補助するローカル専用ツールであることを明示するための呼称 |
 
 ---
 
-## 9. 変更履歴
+## 10. 変更履歴
 
 | バージョン | 日付 | 内容 |
 |---|---|---|
+| 4.0 | 2026-09-03 | 実行環境を静的ホスティングに変更。サーバー(`src/server.ts`)・SQLiteデータベース(`src/db.ts`)・REST APIを廃止し、設定データをソースコード内のフラットファイル(`src/portal-config.ts`)へ変更。閲覧画面はビルド時に設定を静的バンドルする方式に変更し、編集画面はサーバー保存を行わないローカル編集補助ツール(TypeScriptファイル生成)に再設計 |
 | 3.0 | 2026-09-03 | ランタイムをNode.js(Express)からDenoに移行し、実装言語をTypeScriptに統一。`src/`配下のTypeScriptを正本とし、`deno bundle`でJavaScript(`dist/`・`public/js/`)を生成するビルド方式を導入。SQLiteドライバを`node:sqlite`から`jsr:@db/sqlite`に変更 |
 | 2.0 | 2026-09-03 | SQLiteデータベース + Expressバックエンドを導入。マスター仕様書（本ファイル）を新設し、仕様をREADMEから分離・集約 |
 | 1.1 | 2026-02-27 | LocalStorage自動保存、JSONインポート/エクスポート、デフォルトに戻す機能を追加（静的サイト構成時代の仕様。現行仕様には非適用） |

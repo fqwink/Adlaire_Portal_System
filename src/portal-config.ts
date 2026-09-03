@@ -1,9 +1,16 @@
-// Adlaire Portal System - 初期シードデータ
-// データベースが空のとき（初回起動時）にこの内容でテーブルを初期化する。
+// Adlaire Portal System - 設定データ (フラットファイル)
+//
+// このファイルが設定の唯一の正本です。サーバーもデータベースも存在しないため、
+// ポータルの内容(タイトル・お知らせ・カテゴリ・リンク)を変更する場合は、
+// このファイルを直接編集してコミットし、`deno task build` で再ビルドの上、
+// 静的ホスティング先へ再デプロイしてください。
+//
+// public/edit.html は、このファイルを書き換えるための編集内容を組み立てて
+// TypeScriptファイルとして書き出すローカル編集ツールです（自動反映はされません）。
 
 import type { PortalConfig } from "./types.ts";
 
-export const seedData: PortalConfig = {
+export const PORTAL_CONFIG: PortalConfig = {
   title: "Adlaireポータル",
   themeColor: "#00a968",
   news: [

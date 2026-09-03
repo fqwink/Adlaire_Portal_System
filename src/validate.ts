@@ -1,5 +1,5 @@
 // Adlaire Portal System - 設定データのバリデーション
-// SPEC.md §4.4 のサーバー側バリデーション仕様に対応する。
+// SPEC.md §6 のバリデーション仕様に対応する。edit.html でのファイル生成前チェックに使用する。
 
 import type { PortalConfig } from "./types.ts";
 

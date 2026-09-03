@@ -1,8 +1,2 @@
-data/*.db
-data/*.db-journal
-data/*.db-wal
-data/*.db-shm
-
 # ビルド生成物 (deno task build で src/*.ts から再生成される)
-dist/
 public/js/

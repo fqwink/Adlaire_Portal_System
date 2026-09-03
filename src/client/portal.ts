@@ -1,9 +1,12 @@
 // Adlaire Portal System - 閲覧画面 (portal.html) のクライアントロジック
 // ビルド後、public/js/portal.js として portal.html から読み込まれる。
+// サーバーは存在しないため、設定データは src/portal-config.ts からビルド時に
+// このファイルへ直接バンドルされる(実行時のfetchは行わない)。
 /// <reference lib="dom" />
 /// <reference lib="dom.iterable" />
 
 import type { Category, PortalConfig } from "../types.ts";
+import { PORTAL_CONFIG } from "../portal-config.ts";
 
 function hexToRgb(hex: string): string | null {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -138,14 +141,5 @@ document.getElementById("search-input")!.addEventListener("keyup", (e) => {
   }
 });
 
-// サーバーAPI(SQLiteデータベース)から設定を読み込んで表示
-fetch("/api/config")
-  .then((res) => {
-    if (!res.ok) throw new Error("設定データの取得に失敗しました");
-    return res.json();
-  })
-  .then((config: PortalConfig) => renderPortal(config))
-  .catch((err) => {
-    console.error("❌ 設定データの読み込みエラー:", err);
-    document.getElementById("error-area")!.style.display = "block";
-  });
+// ビルド時にバンドルされた設定データを表示する
+renderPortal(PORTAL_CONFIG);

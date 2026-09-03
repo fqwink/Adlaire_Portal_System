@@ -88,11 +88,6 @@
   .footer { margin-top: 80px; font-size: 12px; color: #999; text-align: center; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 30px; }
   .footer a { color: var(--primary); font-weight: bold; }
 
-  .error-box {
-    background: #fee2e2; color: #b91c1c; border-radius: 12px; padding: 20px 25px; margin-bottom: 40px;
-    font-weight: bold; display: none;
-  }
-
   @media (max-width: 768px) {
     .layout { flex-direction: column; }
     .sidebar {
@@ -120,7 +115,6 @@
   </aside>
 
   <main class="main">
-    <div id="error-area" class="error-box">⚠️ 設定データの読み込みに失敗しました。サーバーが起動しているか確認してください。</div>
     <div id="news-area" class="news-box">
       <div class="news-header">🔔 お知らせ</div>
       <ul class="news-list" id="news-list"></ul>
@@ -128,7 +122,7 @@
 
     <div class="search-wrap"><input type="text" id="search-input" class="search-box" placeholder="🔍  メニューを検索..."></div>
     <div id="content-area"></div>
-    <div class="footer">Powered by <strong>Adlaire Portal System</strong> v3.0</div>
+    <div class="footer">Powered by <strong>Adlaire Portal System</strong> v4.0</div>
   </main>
 </div>
 
