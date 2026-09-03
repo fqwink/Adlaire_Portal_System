@@ -106,7 +106,7 @@ A. `jsr:@db/sqlite`（Deno組み込みではなくFFIベースのSQLiteライブ
 このシステムは独自開発のため、自由にカスタマイズ・配布できます。
 
 ## ℹ️ バージョン情報
-- **Version**: v0.19
+- **Version**: v0.20
 - **Name**: Adlaire Portal System
 
 バージョン番号の付け方（累積連番`v0.N`・安定版`vX.Y`）は [`SPEC.md`](./SPEC.md) の「1.4 バージョニング方針」、
@@ -115,5 +115,5 @@ A. `jsr:@db/sqlite`（Deno組み込みではなくFFIベースのSQLiteライブ
 
 ---
 
-**Adlaire Portal System** v0.19
+**Adlaire Portal System** v0.20
 © 2026 All Rights Reserved
