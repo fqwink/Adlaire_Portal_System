@@ -9,6 +9,11 @@
 
 import type { Category, LinkItem, NewsItem, PortalConfig } from "../types.ts";
 
+// JSONエクスポート(handleImportFileが読み込む)ファイルの形式バージョン。
+// アプリのバージョン(SPEC.mdのバージョン)とは独立しており、{title, themeColor, news, categories}
+// というエクスポート形式自体が変わらない限り上げる必要はない。
+const EXPORT_FORMAT_VERSION = "1";
+
 function updateStorageStatus(message: string): void {
   const statusEl = document.getElementById("storage-status");
   if (statusEl) {
@@ -371,7 +376,7 @@ async function saveToServer(): Promise<void> {
 // JSON形式でエクスポート
 function exportJSON(): void {
   const data = {
-    version: "5.0",
+    version: EXPORT_FORMAT_VERSION,
     exportDate: new Date().toISOString(),
     config: config,
   };

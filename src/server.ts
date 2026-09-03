@@ -1,5 +1,5 @@
 // Adlaire Portal System - Denoサーバー
-// 静的ファイル(public/配下)の配信と、設定データのREST APIを提供する。
+// 静的ファイル(public/配下)の配信、設定データのREST API、リンク到達確認API(check-links)を提供する。
 
 import { serveDir } from "jsr:@std/http@^1.1.3/file-server";
 import { fromFileUrl } from "jsr:@std/path@^1.1.6";

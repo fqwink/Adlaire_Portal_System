@@ -1,5 +1,5 @@
 // Adlaire Portal System - 共有型定義
-// src/validate.ts・src/client/*.ts・scripts/check-config.ts で共通利用する。
+// src/validate.ts・src/db.ts・src/client/*.ts・scripts/check-config.ts で共通利用する。
 
 export interface NewsItem {
   date: string;

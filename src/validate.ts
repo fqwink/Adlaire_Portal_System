@@ -1,11 +1,13 @@
 // Adlaire Portal System - 設定データのバリデーション
-// SPEC.md §6 のバリデーション仕様に対応する。edit.html でのファイル生成前チェックに使用する。
+// SPEC.md §6 のバリデーション仕様に対応する。src/db.ts の replaceConfig() (PUT /api/config、
+// および scripts/check-config.ts によるシードデータのビルド前検証) から呼び出される。
+// isValidUrl() は src/server.ts の check-links エンドポイントでも入力検証に使う。
 
 import type { PortalConfig } from "./types.ts";
 
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 
-// portal.html / edit.html 側の sanitizeUrl() と同じ基準で検証する
+// portal.html の sanitizeUrl() と同じ基準で検証する
 export function isValidUrl(url: unknown): boolean {
   if (typeof url !== "string") return false;
   const trimmed = url.trim();
