@@ -1,12 +1,14 @@
 // Adlaire Portal System - 閲覧画面 (portal.html) のクライアントロジック
 // ビルド後、public/js/portal.js として portal.html から読み込まれる。
-// サーバーは存在しないため、設定データは src/portal-config.ts からビルド時に
+// サーバーは存在しないため、設定データは src/portal-config.json からビルド時に
 // このファイルへ直接バンドルされる(実行時のfetchは行わない)。
 /// <reference lib="dom" />
 /// <reference lib="dom.iterable" />
 
 import type { Category, PortalConfig } from "../types.ts";
-import { PORTAL_CONFIG } from "../portal-config.ts";
+import rawConfig from "../portal-config.json" with { type: "json" };
+
+const PORTAL_CONFIG = rawConfig as PortalConfig;
 
 function hexToRgb(hex: string): string | null {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);

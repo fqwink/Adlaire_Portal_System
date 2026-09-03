@@ -12,7 +12,7 @@
 > `deno task build` によってTypeScriptから自動生成されます。生成されたJavaScriptファイルを直接編集しないでください。
 >
 > 設定データ（タイトル・お知らせ・カテゴリ・リンク）はデータベースではなく、**ソースコード内のフラットファイル
-> `src/portal-config.ts` そのもの**です。内容を変更する場合は、このファイルを編集してビルドし直し、
+> `src/portal-config.json` そのもの**です。内容を変更する場合は、このファイルを編集してビルドし直し、
 > 静的ホスティング先へ再デプロイしてください。
 
 ## 🚀 セットアップ
@@ -47,11 +47,11 @@ deno task check
 
 ## 🛠️ 設定内容の変更方法
 
-設定（タイトル・お知らせ・カテゴリ・リンク）は `src/portal-config.ts` というTypeScriptファイルに直接書かれています。
+設定（タイトル・お知らせ・カテゴリ・リンク）は `src/portal-config.json` というJSONファイルに直接書かれています。
 変更するには次のいずれかの方法を使います。
 
-### 方法1: `src/portal-config.ts` を直接編集する（基本）
-1. `src/portal-config.ts` を開き、内容を編集します
+### 方法1: `src/portal-config.json` を直接編集する（基本）
+1. `src/portal-config.json` を開き、内容を編集します
 2. `deno task build` でビルドし、`deno task preview` で見た目を確認します
 3. 変更をコミットし、静的ホスティング先へ再デプロイします
 
@@ -59,11 +59,11 @@ deno task check
 GUIで編集したい場合は、以下の手順でファイルを生成できます。
 1. `deno task preview` を実行し、ブラウザで `edit.html` を開きます
 2. 左側のフォームでリンクやカテゴリを編集します（右側にライブプレビューが表示されます）
-3. 「📄 portal-config.ts を生成」ボタンを押すと、編集内容を反映したファイルがダウンロードされます
-4. ダウンロードした内容で `src/portal-config.ts` を置き換えます
+3. 「📄 portal-config.json を生成」ボタンを押すと、編集内容を反映したファイルがダウンロードされます
+4. ダウンロードした内容で `src/portal-config.json` を置き換えます
 5. 方法1の手順2.〜3.（ビルド確認・コミット・再デプロイ）を行います
 
-**注意**: `edit.html` はサーバーに保存する画面ではありません。「📄 portal-config.ts を生成」ボタンを押すまでの
+**注意**: `edit.html` はサーバーに保存する画面ではありません。「📄 portal-config.json を生成」ボタンを押すまでの
 編集内容はブラウザのタブ内にのみ存在し、どこにも自動保存されません。
 
 操作の詳細（各ボタンの挙動、バリデーション仕様など）は [`SPEC.md`](./SPEC.md) の「5. 画面仕様」を参照してください。
@@ -75,7 +75,7 @@ GUIで編集したい場合は、以下の手順でファイルを生成でき�
 
 ## 🆘 トラブルシューティング
 
-### Q. `src/portal-config.ts` を編集したのに `portal.html` に反映されない
+### Q. `src/portal-config.json` を編集したのに `portal.html` に反映されない
 A. `deno task build` を実行してビルドし直してください。ビルドしただけではローカルの `public/js/*.js` が
    更新されるだけなので、本番環境に反映するにはあらためて静的ホスティング先へ再デプロイする必要があります。
 
@@ -94,12 +94,12 @@ A. いいえ、不要です。`public/` ディレクトリの中身は純粋な�
 このシステムは独自開発のため、自由にカスタマイズ・配布できます。
 
 ## ℹ️ バージョン情報
-- **Version**: 4.0
+- **Version**: 4.1
 - **Name**: Adlaire Portal System
 
 変更履歴は [`SPEC.md`](./SPEC.md) の「10. 変更履歴」に記載しています。
 
 ---
 
-**Adlaire Portal System** v4.0
+**Adlaire Portal System** v4.1
 © 2026 All Rights Reserved

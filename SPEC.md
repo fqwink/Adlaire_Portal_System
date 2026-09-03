@@ -6,7 +6,7 @@
 仕様を変更する場合は、実装の変更とあわせて必ず本ファイルを更新すること。
 
 - **システム名**: Adlaire Portal System
-- **バージョン**: 4.0
+- **バージョン**: 4.1
 - **最終更新**: 2026-09-03
 
 ---
@@ -18,9 +18,9 @@ Cloudflare Pages、Netlify、S3+CloudFront等）を実行環境とする社内�
 社内でよく使うリンクをカテゴリ別に整理して一覧表示する「閲覧画面」の1画面（+ ローカル編集補助ツール）で構成される。
 
 設定データ（タイトル・テーマカラー・お知らせ・カテゴリ・リンク）は**サーバーもデータベースも介さず**、
-ソースコード内のフラットファイル（`src/portal-config.ts`）として管理する。この内容はビルド時に
+ソースコード内のフラットファイル（`src/portal-config.json`）として管理する。この内容はビルド時に
 静的なJavaScriptへ直接埋め込まれ（バンドル）、配信後は一切の書き込み・永続化は行われない。
-設定を変更する場合は、`src/portal-config.ts` を編集してビルドし直し、静的ホスティング先へ再デプロイする。
+設定を変更する場合は、`src/portal-config.json` を編集してビルドし直し、静的ホスティング先へ再デプロイする。
 
 **すべてのソースコードはTypeScript(`src/`配下)が正本であり、配信に使用するJavaScript(`public/js/`配下)は
 ビルド（`deno task build`）によってTypeScriptから生成される。生成されたJavaScriptを直接編集してはならない。**
@@ -32,7 +32,7 @@ Deno・Node.js等いかなるサーバーサイドランタイムも必要とし
 - 編集補助ツール（`public/edit.html` + `src/client/edit.ts`）※後述、サーバー保存機能は持たない
 - バリデーション（`src/validate.ts`）
 - 共有型定義（`src/types.ts`）
-- 設定データ・フラットファイル（`src/portal-config.ts`）
+- 設定データ・フラットファイル（`src/portal-config.json`）
 
 ### 1.2 非対象範囲（実装しない）
 - サーバーサイドの実行環境（アプリケーションサーバー、データベース、REST API）
@@ -49,13 +49,15 @@ Deno・Node.js等いかなるサーバーサイドランタイムも必要とし
 adlaire_portal/
 ├── deno.json                 # Denoタスク定義 (ビルド/プレビュー/型チェック)・コンパイラオプション
 ├── deno.lock                  # 依存関係ロックファイル
-├── src/                        # TypeScript正本 (すべての実装・設定変更はここを編集する)
+├── src/                        # 実装(TypeScript)・設定データ(JSON)の正本 (変更はここを編集する)
 │   ├── types.ts                # 共有型定義 (PortalConfig等)
-│   ├── validate.ts              # 設定データのバリデーション (編集画面での利用)
-│   ├── portal-config.ts         # 設定データ・フラットファイル (唯一の設定の正本)
+│   ├── validate.ts              # 設定データのバリデーション (ビルド前チェック・編集画面での利用)
+│   ├── portal-config.json         # 設定データ・フラットファイル (唯一の設定の正本、JSON)
 │   └── client/
 │       ├── portal.ts             # 閲覧画面のクライアントロジック
 │       └── edit.ts                # 編集補助ツールのクライアントロジック
+├── scripts/
+│   └── check-config.ts          # ビルド前に portal-config.json を検証するスクリプト
 ├── public/                     # 静的ホスティングへそのままデプロイするディレクトリ
 │   ├── portal.html             # 閲覧画面 (HTML/CSSのみ。ロジックはjs/portal.jsを読み込む)
 │   ├── edit.html                # 編集補助ツール (同上、js/edit.jsを読み込む)
@@ -77,29 +79,36 @@ adlaire_portal/
 | 実行環境（本番） | 任意の静的ホスティングサービス（GitHub Pages、Cloudflare Pages、Netlify、S3等。特定サービスに依存しない） |
 | サーバー / API / データベース | なし |
 | フロントエンド | TypeScriptをビルドしたプレーンJavaScript（フレームワーク不使用） |
-| データの持ち方 | ビルド時にJavaScriptへ静的に埋め込み（`src/portal-config.ts` → `public/js/portal.js` / `public/js/edit.js`）。実行時の通信は発生しない |
+| データの持ち方 | ビルド時にJavaScriptへ静的に埋め込み（`src/portal-config.json` → `public/js/portal.js` / `public/js/edit.js`）。実行時の通信は発生しない |
 
 ### 2.2 ビルド・プレビュー方法
 ```bash
-deno task build     # src/*.ts から public/js/*.js を生成
-deno task preview   # build を実行した上で、public/ をローカルの静的サーバーで配信 (開発確認用。既定ポート:3000)
-deno task check      # 型チェックのみ実行 (ビルドしない)
+deno task build            # portal-config.jsonの検証 → src/*.ts から public/js/*.js を生成
+deno task preview          # build を実行した上で、public/ をローカルの静的サーバーで配信 (開発確認用。既定ポート:3000)
+deno task check             # 型チェックのみ実行 (ビルドしない)
+deno task validate-config   # portal-config.json の検証のみ実行
 ```
-`deno task preview` はあくまでローカルでの動作確認用の簡易サーバーであり、本番の実行環境ではない。
-本番では `deno task build` 後の `public/` ディレクトリ一式を任意の静的ホスティングサービスへアップロードする。
+`deno task build` は内部で `scripts/check-config.ts` を実行し、`src/portal-config.json` が §6 のバリデーションを
+満たさない場合はビルドを中断する。`deno task preview` はあくまでローカルでの動作確認用の簡易サーバーであり、
+本番の実行環境ではない。本番では `deno task build` 後の `public/` ディレクトリ一式を任意の静的ホスティングサービスへ
+アップロードする。
 
 > ℹ️ `src/client/portal.ts` / `src/client/edit.ts` はブラウザで実行されるコードのため、
 > `deno bundle --platform browser --format iife` でプレーンJavaScript（IIFE形式、依存モジュール込みの単一ファイル）に
 > コンパイルし、`public/js/portal.js` / `public/js/edit.js` として出力する。
-> `src/portal-config.ts` の内容はこの際に両ファイルへ静的な値としてバンドルされる。
+> `src/portal-config.json` の内容はこの際に両ファイルへ静的な値としてバンドルされる。
 
 ---
 
 ## 3. データモデル
 
-サーバー・データベースを持たないため、データモデルは`src/types.ts`で定義するTypeScriptの型がそのまま唯一の構造定義となる。
+設定データの実体は `src/portal-config.json` という単一のJSONファイルであり、これがシステム全体で唯一の設定データである。
+構造の定義（型）は `src/types.ts` のTypeScript型として別途持ち、`src/client/portal.ts` と `src/client/edit.ts` は
+`import rawConfig from "../portal-config.json" with { type: "json" }` で読み込んだ値を `PortalConfig` 型としてキャストして扱う。
+この型キャストはあくまでTypeScript側の開発支援であり、実行時・ビルド時の構造検証は §6 の `validateConfig()` が担う。
 
 ```typescript
+// src/types.ts
 interface NewsItem {
   date: string;
   text: string;
@@ -124,9 +133,7 @@ interface PortalConfig {
 }
 ```
 
-`src/portal-config.ts` は `PortalConfig` 型の値を1つエクスポートする（`export const PORTAL_CONFIG: PortalConfig = {...}`）。
-これがシステム全体で唯一の設定データであり、`src/client/portal.ts` と `src/client/edit.ts` の双方がビルド時にこの値を直接importし、
-バンドルする。
+`src/portal-config.json` の実際の内容は次の形式（JSONそのものであり、コメントは書けない）。
 
 ```json
 {
@@ -146,6 +153,8 @@ interface PortalConfig {
 }
 ```
 
+`src/client/portal.ts` と `src/client/edit.ts` の双方が、ビルド時にこのJSONファイルの内容を直接importし、静的にバンドルする。
+
 ---
 
 ## 4. 設定データの変更手順
@@ -153,19 +162,19 @@ interface PortalConfig {
 サーバー・データベース・保存APIが存在しないため、設定内容の変更は次のいずれかの手順で行う。
 
 ### 4.1 直接編集（推奨・基本手順）
-1. `src/portal-config.ts` を直接編集する
+1. `src/portal-config.json` を直接編集する
 2. `deno task check` で型チェックする
 3. `deno task build` でビルドし、`deno task preview` で見た目を確認する
 4. 変更を通常のGitワークフローでコミットし、静的ホスティング先へ再デプロイする
 
 ### 4.2 編集補助ツール（`public/edit.html`）を使う場合
-GUIでの編集内容を確認しながら作業したい場合、`edit.html`（§5.2）を使って`src/portal-config.ts`相当の
-TypeScriptファイルを生成できる。
+GUIでの編集内容を確認しながら作業したい場合、`edit.html`（§5.2）を使って`src/portal-config.json`相当の
+JSONファイルを生成できる。
 
 1. `deno task preview` を実行し、ブラウザで `edit.html` を開く
 2. フォームでタイトル・お知らせ・カテゴリ・リンクを編集する（画面右側にライブプレビューが表示される）
-3. 「📄 portal-config.ts を生成」ボタンで、編集内容を反映したTypeScriptファイルをダウンロードする
-4. ダウンロードしたファイルの中身で `src/portal-config.ts` を置き換える
+3. 「📄 portal-config.json を生成」ボタンで、編集内容を反映したJSONファイルをダウンロードする
+4. ダウンロードしたファイルの中身で `src/portal-config.json` を置き換える
 5. §4.1 の手順3.〜4.（ビルド確認・コミット・再デプロイ）を行う
 
 この画面で行った編集は、ファイルを生成してダウンロードするまではブラウザのタブ内メモリ上にのみ存在し、
@@ -188,7 +197,7 @@ TypeScriptファイルを生成できる。
 #### 5.1.2 機能仕様
 | 機能 | 仕様 |
 |---|---|
-| データ表示 | ビルド時に `src/portal-config.ts` の内容が `public/js/portal.js` へ静的にバンドルされており、ページ読み込み時に即座に`renderPortal()`でDOMに描画する。通信は発生しないため読み込み失敗は起こり得ない |
+| データ表示 | ビルド時に `src/portal-config.json` の内容が `public/js/portal.js` へ静的にバンドルされており、ページ読み込み時に即座に`renderPortal()`でDOMに描画する。通信は発生しないため読み込み失敗は起こり得ない |
 | ナビゲーション | サイドバーのカテゴリリンクをクリックすると、該当セクションへスムーズスクロールする（アンカーリンクの既定動作は`preventDefault`） |
 | お知らせ表示 | `news`配列を日付+本文で一覧表示。0件の場合は欄ごと非表示。リスト部分は最大高さ120pxでスクロール可能 |
 | テーマカラー反映 | `themeColor`からCSS変数 `--primary` を設定し、そこから `--primary-light`（10%不透明度相当のrgba）と`--primary-dark`（RGB各値-30）を自動算出してCSS変数に反映する |
@@ -200,7 +209,7 @@ TypeScriptファイルを生成できる。
 
 ### 5.2 編集補助ツール（`public/edit.html`）
 
-サーバーを持たないため、この画面は「設定を保存する画面」ではなく「`src/portal-config.ts`に貼り戻すための
+サーバーを持たないため、この画面は「設定を保存する画面」ではなく「`src/portal-config.json`に貼り戻すための
 TypeScriptファイルをGUI操作で組み立てる、ローカル専用の補助ツール」という位置づけである。
 
 #### 5.2.1 画面構成
@@ -213,7 +222,7 @@ TypeScriptファイルをGUI操作で組み立てる、ローカル専用の補�
 #### 5.2.2 機能仕様
 | 機能 | 仕様 |
 |---|---|
-| 初期表示 | ページ読み込み時、ビルドされている `src/portal-config.ts` の内容（バンドル済みの`PORTAL_CONFIG`）をそのまま編集フォームの初期値とする。通信は発生しない |
+| 初期表示 | ページ読み込み時、ビルドされている `src/portal-config.json` の内容（バンドル済みの`PORTAL_CONFIG`）をそのまま編集フォームの初期値とする。通信は発生しない |
 | 基本設定編集 | タイトル（テキスト入力）、テーマカラー（カラーピッカー）を編集すると、即座にフォーム内の状態とプレビューに反映される |
 | お知らせ管理 | 追加（先頭に本日日付で追加）・削除・日付/本文のインライン編集 |
 | カテゴリ管理 | 追加（末尾に「新規カテゴリ」を追加）・削除（確認ダイアログあり）・名称編集・上下並び替え |
@@ -221,10 +230,10 @@ TypeScriptファイルをGUI操作で組み立てる、ローカル専用の補�
 | アイコン選択 | アイコン欄クリックでパレット（30種類の絵文字）をポップアップ表示し選択。パレット外クリックで自動的に閉じる |
 | ライブプレビュー | 編集内容が変更されるたびに、閲覧画面相当のHTML/CSSを組み立てて`iframe.srcdoc`に反映（実際の閲覧画面とは別ロジックで簡易再現） |
 | プレビュー表示切替 | 「💻 PC」「📱 スマホ」ボタンで`iframe`の表示サイズを切り替え（PC: 100%幅、スマホ: 375×750pxの端末フレーム風表示） |
-| ファイル生成 | 「📄 portal-config.ts を生成」ボタンで、§6のバリデーションを実施した上で、編集内容を`src/portal-config.ts`と同一フォーマットのTypeScriptソースとして組み立て、`portal-config.ts`という名前でダウンロードする。バリデーションに失敗した場合はエラー内容をアラート表示し、ファイルは生成しない |
+| ファイル生成 | 「📄 portal-config.json を生成」ボタンで、§6のバリデーションを実施した上で、編集内容を`src/portal-config.json`と同一フォーマットのJSONとして組み立て、`portal-config.json`という名前でダウンロードする。バリデーションに失敗した場合はエラー内容をアラート表示し、ファイルは生成しない |
 | JSONエクスポート | 現在の編集内容を`{version, exportDate, config}`形式のJSONファイルとしてダウンロード（バックアップ・共有用） |
 | JSONインポート | エクスポート形式のJSONファイルを読み込み、クライアント側で簡易バリデーション（§5.2.3参照）した上でフォームの状態を置き換える |
-| 編集内容の破棄 | 確認ダイアログの上で、フォームの状態をビルドされている`src/portal-config.ts`の内容（初期表示時点の値）に戻す |
+| 編集内容の破棄 | 確認ダイアログの上で、フォームの状態をビルドされている`src/portal-config.json`の内容（初期表示時点の値）に戻す |
 
 #### 5.2.3 クライアント側インポートバリデーション（`handleImportFile()`）
 | 項目 | 検証内容 | 不正時の挙動 |
@@ -245,7 +254,7 @@ TypeScriptファイルをGUI操作で組み立てる、ローカル専用の補�
 ## 6. バリデーション仕様（`src/validate.ts`）
 
 `public/edit.html` の「ファイル生成」実行時に、以下を満たさない場合はファイルを生成せずエラーを表示する
-（`validateConfig()`）。サーバーが存在しないため、これは実行時の入力保護ではなく、開発者が`portal-config.ts`を
+（`validateConfig()`）。サーバーが存在しないため、これは実行時の入力保護ではなく、開発者が`portal-config.json`を
 生成する際の誤り検出を目的とする。
 
 | 項目 | 検証内容 |
@@ -297,7 +306,7 @@ TypeScriptファイルをGUI操作で組み立てる、ローカル専用の補�
 | ソースの正本 | TypeScript（`src/`配下）。JavaScript（`public/js/`配下）は `deno task build` によるビルド生成物であり、直接編集しない |
 | 型チェック | `deno task check`（`deno check`）で`strict`モードの型チェックを実施する |
 | 実行環境（本番） | 任意の静的ホスティングサービス。サーバーサイドの実行環境・データベースを一切必要としない |
-| データ永続化 | なし。設定はソースコード（`src/portal-config.ts`）そのものであり、変更にはビルド・再デプロイを要する |
+| データ永続化 | なし。設定はソースコード（`src/portal-config.json`）そのものであり、変更にはビルド・再デプロイを要する |
 | ロギング | なし（静的配信のため、アプリケーション側でのログ出力機構を持たない） |
 | ブラウザ対応 | モダンブラウザ（CSS変数、`prefers-color-scheme`、`structuredClone`に対応したもの） |
 
@@ -308,11 +317,11 @@ TypeScriptファイルをGUI操作で組み立てる、ローカル専用の補�
 | 用語 | 説明 |
 |---|---|
 | 設定（config） | タイトル・テーマカラー・お知らせ・カテゴリ・リンクをまとめた1つのオブジェクト。システム全体で単一のみ存在する |
-| フラットファイル | 設定データを保持する`src/portal-config.ts`を指す。データベースを使わず、ソースコード中の1ファイルが設定の唯一の実体であることを表す |
+| フラットファイル | 設定データを保持する`src/portal-config.json`を指す。データベースを使わず、ソースコード中の1ファイルが設定の唯一の実体であることを表す |
 | カテゴリ | リンクをグループ化する単位。名称と表示順、複数のリンクを持つ |
 | リンク | カテゴリに属する個別の外部/内部URL。名称・URL・アイコンを持つ |
-| 正本（ソースオブトゥルース） | 人間が直接編集する原本。本システムでは仕様の正本は本ファイル（SPEC.md）、実装の正本は`src/`配下のTypeScriptファイル、設定データの正本は`src/portal-config.ts`を指す |
-| 編集補助ツール | `public/edit.html`を指す。設定を「保存」する機能ではなく、`portal-config.ts`の生成を補助するローカル専用ツールであることを明示するための呼称 |
+| 正本（ソースオブトゥルース） | 人間が直接編集する原本。本システムでは仕様の正本は本ファイル（SPEC.md）、実装の正本は`src/`配下のTypeScriptファイル、設定データの正本は`src/portal-config.json`を指す |
+| 編集補助ツール | `public/edit.html`を指す。設定を「保存」する機能ではなく、`portal-config.json`の生成を補助するローカル専用ツールであることを明示するための呼称 |
 
 ---
 
@@ -320,6 +329,7 @@ TypeScriptファイルをGUI操作で組み立てる、ローカル専用の補�
 
 | バージョン | 日付 | 内容 |
 |---|---|---|
+| 4.1 | 2026-09-03 | 設定データ・フラットファイルの形式をTypeScript(`src/portal-config.ts`)からJSON(`src/portal-config.json`)に変更。構造検証は`src/types.ts`の型キャスト+ビルド前バリデーション(`scripts/check-config.ts`、`deno task build`から自動実行)で担保する方式に変更。編集補助ツールが生成するファイルもTypeScriptからJSONに変更 |
 | 4.0 | 2026-09-03 | 実行環境を静的ホスティングに変更。サーバー(`src/server.ts`)・SQLiteデータベース(`src/db.ts`)・REST APIを廃止し、設定データをソースコード内のフラットファイル(`src/portal-config.ts`)へ変更。閲覧画面はビルド時に設定を静的バンドルする方式に変更し、編集画面はサーバー保存を行わないローカル編集補助ツール(TypeScriptファイル生成)に再設計 |
 | 3.0 | 2026-09-03 | ランタイムをNode.js(Express)からDenoに移行し、実装言語をTypeScriptに統一。`src/`配下のTypeScriptを正本とし、`deno bundle`でJavaScript(`dist/`・`public/js/`)を生成するビルド方式を導入。SQLiteドライバを`node:sqlite`から`jsr:@db/sqlite`に変更 |
 | 2.0 | 2026-09-03 | SQLiteデータベース + Expressバックエンドを導入。マスター仕様書（本ファイル）を新設し、仕様をREADMEから分離・集約 |

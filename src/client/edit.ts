@@ -5,15 +5,17 @@
 //
 // サーバー・データベースは存在しない(静的ホスティング)ため、本画面はあくまで
 // ローカルの編集補助ツールという位置づけ。「保存」操作はサーバーへの永続化ではなく、
-// src/portal-config.ts を置き換えるためのTypeScriptファイルを生成してダウンロードする。
-// 生成したファイルで src/portal-config.ts を上書きし、コミット後に
+// src/portal-config.json を置き換えるためのJSONファイルを生成してダウンロードする。
+// 生成したファイルで src/portal-config.json を上書きし、コミット後に
 // `deno task build` で再ビルド・再デプロイして初めて公開内容に反映される。
 /// <reference lib="dom" />
 /// <reference lib="dom.iterable" />
 
 import type { Category, LinkItem, NewsItem, PortalConfig } from "../types.ts";
-import { PORTAL_CONFIG } from "../portal-config.ts";
+import rawConfig from "../portal-config.json" with { type: "json" };
 import { validateConfig } from "../validate.ts";
+
+const PORTAL_CONFIG = rawConfig as PortalConfig;
 
 function updateStorageStatus(message: string): void {
   const statusEl = document.getElementById("storage-status");
@@ -30,24 +32,11 @@ function normalizeConfig(c: PortalConfig): PortalConfig {
   return c;
 }
 
-// 編集セッションの初期値は、ビルド時にバンドルされた現在の src/portal-config.ts の内容
+// 編集セッションの初期値は、ビルド時にバンドルされた現在の src/portal-config.json の内容
 let config: PortalConfig = normalizeConfig(structuredClone(PORTAL_CONFIG));
 
 function generateConfigFileSource(c: PortalConfig): string {
-  return `// Adlaire Portal System - 設定データ (フラットファイル)
-//
-// このファイルが設定の唯一の正本です。サーバーもデータベースも存在しないため、
-// ポータルの内容(タイトル・お知らせ・カテゴリ・リンク)を変更する場合は、
-// このファイルを直接編集してコミットし、\`deno task build\` で再ビルドの上、
-// 静的ホスティング先へ再デプロイしてください。
-//
-// public/edit.html は、このファイルを書き換えるための編集内容を組み立てて
-// TypeScriptファイルとして書き出すローカル編集ツールです（自動反映はされません）。
-
-import type { PortalConfig } from "./types.ts";
-
-export const PORTAL_CONFIG: PortalConfig = ${JSON.stringify(c, null, 2)};
-`;
+  return JSON.stringify(c, null, 2) + "\n";
 }
 
 const ICONS = [
@@ -254,7 +243,7 @@ function addLink(c: number): void {
   updatePreview();
 }
 
-// src/portal-config.ts を置き換えるTypeScriptファイルを生成してダウンロードする
+// src/portal-config.json を置き換えるJSONファイルを生成してダウンロードする
 function saveToFile(): void {
   try {
     validateConfig(config);
@@ -264,17 +253,17 @@ function saveToFile(): void {
   }
 
   const content = generateConfigFileSource(config);
-  const blob = new Blob([content], { type: "text/typescript" });
+  const blob = new Blob([content], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "portal-config.ts";
+  a.download = "portal-config.json";
   a.click();
   URL.revokeObjectURL(url);
-  updateStorageStatus("📄 portal-config.ts を生成 (" + new Date().toLocaleTimeString("ja-JP") + ")");
+  updateStorageStatus("📄 portal-config.json を生成 (" + new Date().toLocaleTimeString("ja-JP") + ")");
   alert(
-    "✅ portal-config.ts を生成しました!\n\n" +
-      "ダウンロードしたファイルで src/portal-config.ts を置き換えてコミットし、\n" +
+    "✅ portal-config.json を生成しました!\n\n" +
+      "ダウンロードしたファイルで src/portal-config.json を置き換えてコミットし、\n" +
       "`deno task build` で再ビルド・再デプロイすると公開内容に反映されます。",
   );
 }
@@ -335,7 +324,7 @@ function handleImportFile(event: Event): void {
       renderForm();
       updatePreview();
       updateStorageStatus("📥 インポート完了 (未保存)");
-      alert("✅ 設定をインポートしました!\n\n「portal-config.tsを生成」ボタンを押すとファイルに書き出せます。");
+      alert("✅ 設定をインポートしました!\n\n「portal-config.jsonを生成」ボタンを押すとファイルに書き出せます。");
     } catch (error) {
       console.error("インポートエラー:", error);
       updateStorageStatus("❌ インポート失敗");
@@ -346,15 +335,15 @@ function handleImportFile(event: Event): void {
   (event.target as HTMLInputElement).value = ""; // リセット
 }
 
-// 編集内容を破棄し、現在ビルドされている src/portal-config.ts の内容に戻す
+// 編集内容を破棄し、現在ビルドされている src/portal-config.json の内容に戻す
 function resetToDefault(): void {
-  if (!confirm("⚠️ 編集中の内容を破棄して、現在の portal-config.ts の内容に戻しますか?\n\nこの操作は取り消せません。")) {
+  if (!confirm("⚠️ 編集中の内容を破棄して、現在の portal-config.json の内容に戻しますか?\n\nこの操作は取り消せません。")) {
     return;
   }
   config = normalizeConfig(structuredClone(PORTAL_CONFIG));
   renderForm();
   updatePreview();
-  updateStorageStatus("🔄 portal-config.ts の内容に戻しました (未保存の編集は破棄されました)");
+  updateStorageStatus("🔄 portal-config.json の内容に戻しました (未保存の編集は破棄されました)");
 }
 
 // パレットの外側クリックで閉じる
@@ -390,7 +379,7 @@ Object.assign(globalThis, {
   resetToDefault,
 });
 
-// 初期化: ビルド時にバンドルされた portal-config.ts の内容をフォームに反映する
+// 初期化: ビルド時にバンドルされた portal-config.json の内容をフォームに反映する
 updateStorageStatus("🗄️ ローカル編集モード (サーバーなし)");
 renderForm();
 updatePreview();
