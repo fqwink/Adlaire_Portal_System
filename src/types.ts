@@ -40,6 +40,11 @@ export interface Category {
   // 閲覧画面(portal.html)には表示しない「下書き」状態(編集者が管理する共有データ)。
   // 編集画面では引き続き編集できる。省略時はfalse扱い(公開状態)。
   hidden?: boolean;
+  // カテゴリ名の前に表示する任意の絵文字アイコン(§5.1.2)。省略時は表示しない。
+  icon?: string;
+  // 閲覧画面でのリンクの表示形式。省略時("grid")は既存のカードグリッド表示、"list"は
+  // 1行ずつのコンパクトな一覧表示にする(§5.1.2)。
+  displayMode?: "grid" | "list";
 }
 
 export interface PortalConfig {
@@ -53,6 +58,12 @@ export interface PortalConfig {
   // trueの場合、閲覧画面のリンクカードでicon(絵文字)の代わりにリンク先のファビコンを表示する。
   // 取得に失敗した場合はiconにフォールバックする(§5.1.2)。省略時はfalse(絵文字のみ)。
   useFavicon?: boolean;
+  // trueの場合、有効期限(news[].expiresAt)を過ぎたお知らせを閲覧画面から完全に消さず、
+  // 「過去のお知らせ」として折りたたみ表示する(§5.1.2)。省略時はfalse(従来どおり完全非表示)。
+  archiveExpiredNews?: boolean;
+  // trueの場合、種別ラベルが"important"のお知らせを、ピン留め(pinned)と同様に閲覧画面で
+  // 常に先頭にまとめて表示する(§3.2, §5.1.2)。省略時はfalse(ラベルは表示順に影響しない)。
+  pinImportantNews?: boolean;
 }
 
 // GET /api/weather のレスポンス形式。config(PortalConfig)には含まれない、

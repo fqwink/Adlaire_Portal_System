@@ -46,6 +46,39 @@ function newsLabelBadge(label: NewsLabel | undefined): string {
   return "";
 }
 
+// DateオブジェクトをブラウザのローカルタイムゾーンでのYYYY-MM-DD文字列に変換する。
+// toISOString()はUTCに変換してしまうため、日付の比較に使うと非UTC圏(日本時間等)では
+// 実際の現地日付とずれる(特に深夜〜早朝)。addNews()が挿入する日付も同じくローカルの
+// 年月日から組み立てているため、比較の一貫性のためこちらも常にローカル基準で統一する。
+function toLocalDateIso(d: Date): string {
+  const y = d.getFullYear();
+  const m = (d.getMonth() + 1).toString().padStart(2, "0");
+  const day = d.getDate().toString().padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// お知らせの日付文字列(自由記述)をYYYY-MM-DD形式に変換できる場合のみ返す(§5.1.2の期間タブで使用)。
+// 変換できない場合(自由記述で日付として解釈できない等)はnullを返し、期間タブでの絞り込み対象外
+// (常に表示)として扱う。
+function parseNewsDateIso(dateStr: string): string | null {
+  // "YYYY-MM-DD"(ハイフン区切り)はJS仕様上、new Date()がUTC 0時として解釈する特別扱いのため、
+  // toLocalDateIso()でローカル基準に変換し直すとUTCより西側のタイムゾーンでは1日ずれる。
+  // この形式は既にYYYY-MM-DDそのものなので、Dateへの変換を経由せず文字列から直接取り出す。
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr.trim());
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+  // それ以外の自由記述(例: addNews()が生成する"YYYY/MM/DD"形式)はローカル時刻として解釈される
+  // ため、toLocalDateIso()で変換して問題ない。
+  const parsed = new Date(dateStr);
+  return isNaN(parsed.getTime()) ? null : toLocalDateIso(parsed);
+}
+
+function renderNewsItemHtml(item: { date: string; text: string; pinned?: boolean; label?: NewsLabel }): string {
+  const pinBadge = item.pinned ? `<span class="news-pin" title="常に先頭に表示">📌</span>` : "";
+  return `${pinBadge}${newsLabelBadge(item.label)}<span class="news-date">${escapeHtml(item.date)}</span><span class="news-text">${
+    escapeHtml(item.text)
+  }</span>`;
+}
+
 function hexToRgb(hex: string): string | null {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result
@@ -121,13 +154,22 @@ function renderPortal(config: PortalConfig): void {
 
   const newsArea = document.getElementById("news-area")!;
   const newsList = document.getElementById("news-list")!;
+  const archivedArea = document.getElementById("news-archive")!;
+  const archivedList = document.getElementById("news-archive-list")!;
+  const archivedToggle = document.getElementById("news-archive-toggle")!;
   newsList.innerHTML = "";
+  archivedList.innerHTML = "";
 
-  // 有効期限(expiresAt)を過ぎたお知らせは表示しない(SPEC.md §5.1.2)。
-  const todayIso = now.toISOString().slice(0, 10);
-  const newsItems = (Array.isArray(config.news) ? config.news : []).filter(
-    (item) => !item.expiresAt || item.expiresAt >= todayIso,
-  );
+  // 有効期限(expiresAt)を過ぎたお知らせは、既定では表示しない(SPEC.md §5.1.2)。
+  // archiveExpiredNewsが有効な場合は完全に消さず、「過去のお知らせ」として折りたたみ表示する。
+  // ローカルタイムゾーン基準で統一する(applyFilters()の期間タブと同じ理由。toISOString()の
+  // UTC変換だと日本時間等の非UTC圏で「今日」の境界がずれるため)。
+  const todayIso = toLocalDateIso(now);
+  const allNews = Array.isArray(config.news) ? config.news : [];
+  const newsItems = allNews.filter((item) => !item.expiresAt || item.expiresAt >= todayIso);
+  const archivedItems = config.archiveExpiredNews
+    ? allNews.filter((item) => item.expiresAt && item.expiresAt < todayIso)
+    : [];
 
   if (newsItems.length > 0) {
     newsArea.style.display = "block";
@@ -137,15 +179,25 @@ function renderPortal(config: PortalConfig): void {
       li.dataset.search = item.text.toLowerCase();
       li.dataset.name = item.text;
       li.dataset.label = item.label || "";
-      const pinBadge = item.pinned ? `<span class="news-pin" title="常に先頭に表示">📌</span>` : "";
-      li.innerHTML =
-        `${pinBadge}${newsLabelBadge(item.label)}<span class="news-date">${escapeHtml(item.date)}</span><span class="news-text">${
-          escapeHtml(item.text)
-        }</span>`;
+      li.dataset.dateIso = parseNewsDateIso(item.date) || "";
+      li.innerHTML = renderNewsItemHtml(item);
       newsList.appendChild(li);
     });
   } else {
     newsArea.style.display = "none";
+  }
+
+  if (archivedItems.length > 0) {
+    archivedArea.style.display = "block";
+    archivedToggle.textContent = `📦 過去のお知らせ (${archivedItems.length}件)`;
+    archivedItems.forEach((item) => {
+      const li = document.createElement("li");
+      li.className = "news-item";
+      li.innerHTML = renderNewsItemHtml(item);
+      archivedList.appendChild(li);
+    });
+  } else {
+    archivedArea.style.display = "none";
   }
 
   const navList = document.getElementById("nav-list")!;
@@ -157,23 +209,31 @@ function renderPortal(config: PortalConfig): void {
   const visibleCategories = config.categories.filter((cat) => !cat.hidden);
 
   visibleCategories.forEach((cat: Category, idx: number) => {
+    const navIconHtml = cat.icon ? `${escapeHtml(cat.icon)} ` : "";
     const navLi = document.createElement("li");
     navLi.className = "nav-item";
-    navLi.innerHTML = `<a href="#cat-${idx}" class="nav-link"><span>${escapeHtml(cat.name)}</span><span class="nav-count">${cat.links.length}</span></a>`;
+    navLi.innerHTML =
+      `<a href="#cat-${idx}" class="nav-link"><span>${navIconHtml}${escapeHtml(cat.name)}</span><span class="nav-count">${cat.links.length}</span></a>`;
     navList.appendChild(navLi);
 
+    const isList = cat.displayMode === "list";
     const section = document.createElement("div");
     section.className = "category-section search-target";
     section.id = `cat-${idx}`;
+    const titleIconHtml = cat.icon ? `<span class="category-icon">${escapeHtml(cat.icon)}</span>` : "";
     section.innerHTML =
-      `<div class="category-header" data-role="collapse-toggle"><h2 class="category-title">${escapeHtml(cat.name)}</h2><span class="collapse-arrow">▾</span></div>`;
+      `<div class="category-header" data-role="collapse-toggle">${titleIconHtml}<h2 class="category-title">${
+        escapeHtml(cat.name)
+      }</h2><span class="collapse-arrow">▾</span></div>`;
 
+    // カテゴリ単位の表示形式(§3.3, §5.1.2): "list"の場合はカードグリッドの代わりに
+    // コンパクトな1行リスト表示にする(既定は"grid")。
     const grid = document.createElement("div");
-    grid.className = "grid";
+    grid.className = isList ? "grid link-list" : "grid";
     cat.links.forEach((link) => {
       const a = document.createElement("a");
       a.href = sanitizeUrl(link.url);
-      a.className = "card search-item";
+      a.className = isList ? "card card-list search-item" : "card search-item";
       a.target = "_blank";
       a.rel = "noopener noreferrer";
       a.dataset.search = (link.name + cat.name).toLowerCase();
@@ -240,11 +300,27 @@ function renderPortal(config: PortalConfig): void {
   });
 }
 
-// 検索ボックスの語句とお知らせ種別フィルタ(SPEC.md §5.1.2)を組み合わせて表示/非表示を決める。
-// リンクカードは検索語のみ、お知らせは検索語+種別フィルタの両方に一致した場合のみ表示する。
+// 「今日」「今週」の期間タブ(§5.1.2)にお知らせの日付(YYYY-MM-DD)が一致するか判定する。
+// 「今週」は直近NEW_BADGE_DAYS日以内(NEWバッジと同じ日数)とする。
+function matchesDateTab(dateIso: string, tab: string, todayIso: string): boolean {
+  if (tab === "") return true;
+  if (tab === "today") return dateIso === todayIso;
+  if (tab === "week") {
+    const diffDays = (new Date(todayIso).getTime() - new Date(dateIso).getTime()) / (1000 * 60 * 60 * 24);
+    return diffDays >= 0 && diffDays <= NEW_BADGE_DAYS;
+  }
+  return true;
+}
+
+// 検索ボックスの語句とお知らせ種別フィルタ・期間タブ(SPEC.md §5.1.2)を組み合わせて表示/非表示を決める。
+// リンクカードは検索語のみ、お知らせは検索語+種別フィルタ+期間タブすべてに一致した場合のみ表示する。
 function applyFilters(): void {
   const term = (document.getElementById("search-input") as HTMLInputElement).value.toLowerCase();
   const labelFilter = (document.getElementById("news-label-filter") as HTMLSelectElement).value;
+  const dateTab = document.querySelector<HTMLElement>(".news-date-tab.active")?.dataset.tab ?? "";
+  // parseNewsDateIso()と同じくローカルタイムゾーン基準で統一する(toISOString()のUTC変換だと
+  // 日本時間等の非UTC圏で日付がずれるため)。
+  const todayIso = toLocalDateIso(new Date());
   const newsListEl = document.getElementById("news-list")!;
   const newsAreaEl = document.getElementById("news-area")!;
 
@@ -252,7 +328,9 @@ function applyFilters(): void {
     const isNews = item.parentElement === newsListEl;
     const searchMatched = term === "" || (item.dataset.search?.includes(term) ?? false);
     const labelMatched = !isNews || labelFilter === "" || item.dataset.label === labelFilter;
-    const matched = searchMatched && labelMatched;
+    // 日付が解釈できないお知らせ(dateIsoが空)は、期間タブによる絞り込みの対象外として常に表示する。
+    const dateMatched = !isNews || !item.dataset.dateIso || matchesDateTab(item.dataset.dateIso, dateTab, todayIso);
+    const matched = searchMatched && labelMatched && dateMatched;
     item.style.display = matched ? "flex" : "none";
     const nameEl = item.querySelector(".card-name, .news-text");
     if (nameEl) {
@@ -280,13 +358,26 @@ function applyFilters(): void {
     (el) => el.style.display !== "none",
   ).length;
   // お知らせ欄は元々お知らせが1件もない場合は表示しない(renderPortal()と同じ判定)
-  newsAreaEl.style.display = (term === "" && labelFilter === "" ? newsListEl.children.length > 0 : visibleNewsCount > 0)
-    ? "block"
-    : "none";
+  const noFilterActive = term === "" && labelFilter === "" && dateTab === "";
+  newsAreaEl.style.display = (noFilterActive ? newsListEl.children.length > 0 : visibleNewsCount > 0) ? "block" : "none";
 }
 
 document.getElementById("search-input")!.addEventListener("keyup", applyFilters);
 document.getElementById("news-label-filter")!.addEventListener("change", applyFilters);
+
+// お知らせの期間タブ(すべて/今日/今週。SPEC.md §5.1.2)
+document.querySelectorAll<HTMLElement>(".news-date-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll<HTMLElement>(".news-date-tab").forEach((t) => t.classList.remove("active"));
+    tab.classList.add("active");
+    applyFilters();
+  });
+});
+
+// 過去のお知らせ(アーカイブ)の折りたたみ表示切り替え(このブラウザタブ内だけの一時的な表示状態。SPEC.md §1.3)
+document.getElementById("news-archive-toggle")!.addEventListener("click", () => {
+  document.getElementById("news-archive")!.classList.toggle("expanded");
+});
 
 // カテゴリの一括折りたたみ/展開(このブラウザタブ内だけの表示状態。保存・永続化は行わない。SPEC.md §1.3)
 document.getElementById("collapse-all-btn")!.addEventListener("click", () => {

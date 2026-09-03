@@ -64,6 +64,13 @@
   }
   .news-label-important { background: #e74c3c; }
   .news-label-maintenance { background: #e67e22; }
+  .news-date-tabs { display: flex; gap: 4px; padding: 8px 20px 0; }
+  .news-date-tab {
+    background: none; border: none; cursor: pointer; font-size: 11px; color: var(--text); opacity: 0.55;
+    padding: 4px 10px; border-radius: 12px; transition: 0.2s;
+  }
+  .news-date-tab:hover { opacity: 0.85; }
+  .news-date-tab.active { opacity: 1; background: var(--primary-light); color: var(--primary-dark); font-weight: bold; }
   .news-list {
     max-height: 120px;
     overflow-y: auto;
@@ -80,6 +87,20 @@
   .news-pin { font-size: 12px; flex-shrink: 0; }
   .news-date { font-weight: bold; color: var(--primary); font-size: 12px; white-space: nowrap; font-family: monospace; }
   .news-text { line-height: 1.5; }
+
+  /* 過去のお知らせ(アーカイブ)。既定は折りたたみ(ボタンのみ表示)、クリックで展開する(SPEC.md §5.1.2) */
+  .news-archive {
+    background: var(--card-bg); border-radius: 12px; box-shadow: var(--shadow); margin: -20px 0 40px;
+    overflow: hidden; border: 1px solid rgba(0,0,0,0.05); opacity: 0.85;
+  }
+  .news-archive-toggle {
+    width: 100%; text-align: left; background: none; border: none; cursor: pointer; padding: 10px 20px;
+    font-size: 12px; color: var(--text); opacity: 0.7; font-weight: bold;
+  }
+  .news-archive-toggle:hover { opacity: 1; }
+  .news-archive .news-list { max-height: 0; padding: 0; transition: max-height 0.2s; }
+  .news-archive.expanded .news-list { max-height: 200px; }
+  .news-archive .news-item { opacity: 0.75; }
 
   /* 検索ボックス */
   .search-wrap { position: relative; margin-bottom: 12px; }
@@ -103,10 +124,21 @@
     border-bottom: 2px solid rgba(0,0,0,0.05); cursor: pointer; user-select: none;
   }
   .category-title { font-size: 1.5rem; font-weight: bold; color: var(--primary); margin: 0; }
-  .collapse-arrow { font-size: 1.1rem; color: var(--primary); transition: transform 0.2s; }
+  .category-icon { font-size: 1.3rem; margin-right: 10px; line-height: 1; }
+  .collapse-arrow { font-size: 1.1rem; color: var(--primary); transition: transform 0.2s; margin-left: auto; }
   .category-section.collapsed .collapse-arrow { transform: rotate(-90deg); }
   .category-section.collapsed .grid { display: none; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 20px; }
+
+  /* カテゴリ単位のリスト表示形式(§3.3, §5.1.2)。カードグリッドの代わりにコンパクトな1行表示にする */
+  .grid.link-list { display: flex; flex-direction: column; gap: 8px; }
+  .card.card-list {
+    flex-direction: row; justify-content: flex-start; text-align: left; padding: 12px 20px; height: auto;
+  }
+  .card.card-list .card-icon { font-size: 22px; margin-bottom: 0; margin-right: 14px; height: auto; width: auto; }
+  .card.card-list .card-favicon { width: 20px; height: 20px; }
+  .card.card-list .card-badges-left { position: static; margin-right: 10px; }
+  .card.card-list .card-clicks { position: static; margin-left: auto; padding-left: 10px; }
   .card {
     background: var(--card-bg); color: var(--text); border-radius: var(--radius); padding: 25px 20px;
     display: flex; flex-direction: column; align-items: center; text-align: center; justify-content: center;
@@ -159,11 +191,14 @@
   @media print {
     body { background: #fff; }
     .sidebar, .search-wrap, .collapse-controls, .error-box, .footer, .card-clicks,
-    .card-badges-left, .news-label-filter { display: none !important; }
+    .card-badges-left, .news-label-filter, .news-date-tabs, .news-archive { display: none !important; }
     .main { margin-left: 0; padding: 10px; max-width: none; }
     .category-section { break-inside: avoid; margin-bottom: 24px; }
     .category-section.collapsed .grid { display: grid; } /* 折りたたみ中でも印刷時は必ず全件表示する */
     .grid { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    /* リスト表示形式は印刷時もそのまま維持する。上のcollapsed .grid規則(セレクタ詳細度3)に
+       勝てるよう、同じ詳細度3のセレクタにして後勝ちさせる(link-listのみのセレクタでは詳細度2で負ける) */
+    .category-section.collapsed .grid.link-list, .grid.link-list { display: flex; }
     .card { box-shadow: none; border: 1px solid #ccc; break-inside: avoid; }
     .card:hover { transform: none; }
     .news-box { box-shadow: none; border: 1px solid #ccc; }
@@ -189,7 +224,16 @@
           <option value="maintenance">メンテナンスのみ</option>
         </select>
       </div>
+      <div class="news-date-tabs">
+        <button type="button" class="news-date-tab active" data-tab="">すべて</button>
+        <button type="button" class="news-date-tab" data-tab="today">今日</button>
+        <button type="button" class="news-date-tab" data-tab="week">今週</button>
+      </div>
       <ul class="news-list" id="news-list"></ul>
+    </div>
+    <div id="news-archive" class="news-archive" style="display:none;">
+      <button type="button" class="news-archive-toggle" id="news-archive-toggle">📦 過去のお知らせ</button>
+      <ul class="news-list" id="news-archive-list"></ul>
     </div>
 
     <div class="search-wrap"><input type="text" id="search-input" class="search-box" placeholder="🔍  メニューを検索..."></div>
@@ -198,7 +242,7 @@
       <button type="button" class="collapse-btn" id="collapse-all-btn">▸ すべて折りたたむ</button>
     </div>
     <div id="content-area"></div>
-    <div class="footer">Powered by <strong>Adlaire Portal System</strong> v0.25</div>
+    <div class="footer">Powered by <strong>Adlaire Portal System</strong> v0.26</div>
   </main>
 </div>
 

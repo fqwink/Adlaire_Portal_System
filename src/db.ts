@@ -28,7 +28,9 @@ db.exec(`
     theme_color TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
     weather_location TEXT,
-    use_favicon INTEGER NOT NULL DEFAULT 0
+    use_favicon INTEGER NOT NULL DEFAULT 0,
+    archive_expired_news INTEGER NOT NULL DEFAULT 0,
+    pin_important_news INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS news (
@@ -45,7 +47,9 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     sort_order INTEGER NOT NULL,
-    hidden INTEGER NOT NULL DEFAULT 0
+    hidden INTEGER NOT NULL DEFAULT 0,
+    icon TEXT,
+    display_mode TEXT
   );
 
   CREATE TABLE IF NOT EXISTS links (
@@ -101,6 +105,12 @@ if (!settingsColumns.some((c) => c.name === "weather_location")) {
 if (!settingsColumns.some((c) => c.name === "use_favicon")) {
   db.exec("ALTER TABLE settings ADD COLUMN use_favicon INTEGER NOT NULL DEFAULT 0");
 }
+if (!settingsColumns.some((c) => c.name === "archive_expired_news")) {
+  db.exec("ALTER TABLE settings ADD COLUMN archive_expired_news INTEGER NOT NULL DEFAULT 0");
+}
+if (!settingsColumns.some((c) => c.name === "pin_important_news")) {
+  db.exec("ALTER TABLE settings ADD COLUMN pin_important_news INTEGER NOT NULL DEFAULT 0");
+}
 
 // 旧スキーマ(pinned/expires_at/label列なし)で作成済みのDBに対する軽量マイグレーション
 const newsColumns = db.prepare("PRAGMA table_info(news)").all<{ name: string }>();
@@ -114,10 +124,16 @@ if (!newsColumns.some((c) => c.name === "label")) {
   db.exec("ALTER TABLE news ADD COLUMN label TEXT");
 }
 
-// 旧スキーマ(hidden列なし)で作成済みのDBに対する軽量マイグレーション
+// 旧スキーマ(hidden/icon/display_mode列なし)で作成済みのDBに対する軽量マイグレーション
 const categoriesColumns = db.prepare("PRAGMA table_info(categories)").all<{ name: string }>();
 if (!categoriesColumns.some((c) => c.name === "hidden")) {
   db.exec("ALTER TABLE categories ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
+}
+if (!categoriesColumns.some((c) => c.name === "icon")) {
+  db.exec("ALTER TABLE categories ADD COLUMN icon TEXT");
+}
+if (!categoriesColumns.some((c) => c.name === "display_mode")) {
+  db.exec("ALTER TABLE categories ADD COLUMN display_mode TEXT");
 }
 
 // 旧スキーマ(memo列なし)で作成済みのDBに対する軽量マイグレーション
@@ -133,11 +149,15 @@ interface SettingsRow {
   themeColor: string;
   weatherLocation: string | null;
   useFavicon: number;
+  archiveExpiredNews: number;
+  pinImportantNews: number;
 }
 interface CategoryRow {
   id: number;
   name: string;
   hidden: number;
+  icon: string | null;
+  displayMode: string | null;
 }
 
 // PUT /api/config が If-Match ヘッダーで指定したバージョンと現在のDBの内容が
@@ -221,17 +241,23 @@ export function getConfig(): PortalConfig | null {
   const settings = db
     .prepare(
       "SELECT title, theme_color AS themeColor, weather_location AS weatherLocation, " +
-        "use_favicon AS useFavicon FROM settings WHERE id = 1",
+        "use_favicon AS useFavicon, archive_expired_news AS archiveExpiredNews, " +
+        "pin_important_news AS pinImportantNews FROM settings WHERE id = 1",
     )
     .get<SettingsRow>();
   if (!settings) return null;
 
+  // pin_important_newsが有効な場合、labelが"important"のお知らせもpinnedと同様に先頭表示する(§5.1.2)。
+  // labelはNULL可(未設定="一般")のため、素の`label = 'important'`だとSQLの三値論理により
+  // label IS NULLの行がNULL(0でも1でもない)と評価され、DESCソートで0より後ろ(最後)に
+  // 回ってしまう(例: 「メンテナンス」ラベルの行より下になる)。COALESCEで空文字列に正規化してから
+  // 比較することで、未設定行も確実に0(まさに一般=優先度なし)として扱われるようにする。
   const news: NewsItem[] = db
     .prepare(
       "SELECT date, text, pinned, expires_at AS expiresAt, label FROM news " +
-        "ORDER BY pinned DESC, sort_order ASC, id ASC",
+        "ORDER BY (pinned OR (COALESCE(label, '') = 'important' AND ? = 1)) DESC, sort_order ASC, id ASC",
     )
-    .all<NewsRow>()
+    .all<NewsRow>(settings.pinImportantNews)
     .map((row) => ({
       date: row.date,
       text: row.text,
@@ -245,7 +271,7 @@ export function getConfig(): PortalConfig | null {
   const checkStatusMap = getLinkCheckStatusMap();
 
   const categories: Category[] = db
-    .prepare("SELECT id, name, hidden FROM categories ORDER BY sort_order ASC, id ASC")
+    .prepare("SELECT id, name, hidden, icon, display_mode AS displayMode FROM categories ORDER BY sort_order ASC, id ASC")
     .all<CategoryRow>()
     .map((cat) => {
       const links: LinkItem[] = db
@@ -267,7 +293,13 @@ export function getConfig(): PortalConfig | null {
             ...(broken ? { broken: true } : {}),
           };
         });
-      return { name: cat.name, links, ...(cat.hidden ? { hidden: true } : {}) };
+      return {
+        name: cat.name,
+        links,
+        ...(cat.hidden ? { hidden: true } : {}),
+        ...(cat.icon ? { icon: cat.icon } : {}),
+        ...(cat.displayMode === "list" ? { displayMode: "list" as const } : {}),
+      };
     });
 
   return {
@@ -277,6 +309,8 @@ export function getConfig(): PortalConfig | null {
     categories,
     ...(settings.weatherLocation ? { weatherLocation: settings.weatherLocation } : {}),
     ...(settings.useFavicon ? { useFavicon: true } : {}),
+    ...(settings.archiveExpiredNews ? { archiveExpiredNews: true } : {}),
+    ...(settings.pinImportantNews ? { pinImportantNews: true } : {}),
   };
 }
 
@@ -296,10 +330,20 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
   const nextVersion = current ? current.version + 1 : 1;
 
   db.prepare(
-    "INSERT INTO settings (id, title, theme_color, version, weather_location, use_favicon) VALUES (1, ?, ?, ?, ?, ?) " +
+    "INSERT INTO settings (id, title, theme_color, version, weather_location, use_favicon, " +
+      "archive_expired_news, pin_important_news) VALUES (1, ?, ?, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(id) DO UPDATE SET title = excluded.title, theme_color = excluded.theme_color, " +
-      "version = excluded.version, weather_location = excluded.weather_location, use_favicon = excluded.use_favicon",
-  ).run(config.title, config.themeColor, nextVersion, config.weatherLocation || null, config.useFavicon ? 1 : 0);
+      "version = excluded.version, weather_location = excluded.weather_location, use_favicon = excluded.use_favicon, " +
+      "archive_expired_news = excluded.archive_expired_news, pin_important_news = excluded.pin_important_news",
+  ).run(
+    config.title,
+    config.themeColor,
+    nextVersion,
+    config.weatherLocation || null,
+    config.useFavicon ? 1 : 0,
+    config.archiveExpiredNews ? 1 : 0,
+    config.pinImportantNews ? 1 : 0,
+  );
 
   db.exec("DELETE FROM news");
   const insertNews = db.prepare(
@@ -312,7 +356,7 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
   db.exec("DELETE FROM links");
   db.exec("DELETE FROM categories");
   const insertCategory = db.prepare(
-    "INSERT INTO categories (name, sort_order, hidden) VALUES (?, ?, ?)",
+    "INSERT INTO categories (name, sort_order, hidden, icon, display_mode) VALUES (?, ?, ?, ?, ?)",
   );
   const insertLink = db.prepare(
     "INSERT INTO links (category_id, name, url, icon, sort_order, memo) VALUES (?, ?, ?, ?, ?, ?)",
@@ -322,7 +366,7 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
   );
   const now = new Date().toISOString();
   config.categories.forEach((cat, cIdx) => {
-    insertCategory.run(cat.name, cIdx, cat.hidden ? 1 : 0);
+    insertCategory.run(cat.name, cIdx, cat.hidden ? 1 : 0, cat.icon || null, cat.displayMode === "list" ? "list" : null);
     const categoryId = db.lastInsertRowId;
     cat.links.forEach((link, lIdx) => {
       insertLink.run(categoryId, link.name, link.url, link.icon, lIdx, link.memo || null);
