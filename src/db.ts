@@ -27,7 +27,8 @@ db.exec(`
     title TEXT NOT NULL,
     theme_color TEXT NOT NULL,
     version INTEGER NOT NULL DEFAULT 1,
-    weather_location TEXT
+    weather_location TEXT,
+    use_favicon INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS news (
@@ -36,7 +37,8 @@ db.exec(`
     text TEXT NOT NULL,
     sort_order INTEGER NOT NULL,
     pinned INTEGER NOT NULL DEFAULT 0,
-    expires_at TEXT
+    expires_at TEXT,
+    label TEXT
   );
 
   CREATE TABLE IF NOT EXISTS categories (
@@ -52,7 +54,8 @@ db.exec(`
     name TEXT NOT NULL,
     url TEXT NOT NULL,
     icon TEXT NOT NULL,
-    sort_order INTEGER NOT NULL
+    sort_order INTEGER NOT NULL,
+    memo TEXT
   );
 
   -- リンクURLごとの匿名クリック集計。個人・端末を識別する情報は一切持たない(SPEC.md §1.3)。
@@ -95,14 +98,20 @@ if (!settingsColumns.some((c) => c.name === "version")) {
 if (!settingsColumns.some((c) => c.name === "weather_location")) {
   db.exec("ALTER TABLE settings ADD COLUMN weather_location TEXT");
 }
+if (!settingsColumns.some((c) => c.name === "use_favicon")) {
+  db.exec("ALTER TABLE settings ADD COLUMN use_favicon INTEGER NOT NULL DEFAULT 0");
+}
 
-// 旧スキーマ(pinned/expires_at列なし)で作成済みのDBに対する軽量マイグレーション
+// 旧スキーマ(pinned/expires_at/label列なし)で作成済みのDBに対する軽量マイグレーション
 const newsColumns = db.prepare("PRAGMA table_info(news)").all<{ name: string }>();
 if (!newsColumns.some((c) => c.name === "pinned")) {
   db.exec("ALTER TABLE news ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
 }
 if (!newsColumns.some((c) => c.name === "expires_at")) {
   db.exec("ALTER TABLE news ADD COLUMN expires_at TEXT");
+}
+if (!newsColumns.some((c) => c.name === "label")) {
+  db.exec("ALTER TABLE news ADD COLUMN label TEXT");
 }
 
 // 旧スキーマ(hidden列なし)で作成済みのDBに対する軽量マイグレーション
@@ -111,12 +120,19 @@ if (!categoriesColumns.some((c) => c.name === "hidden")) {
   db.exec("ALTER TABLE categories ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
 }
 
+// 旧スキーマ(memo列なし)で作成済みのDBに対する軽量マイグレーション
+const linksColumns = db.prepare("PRAGMA table_info(links)").all<{ name: string }>();
+if (!linksColumns.some((c) => c.name === "memo")) {
+  db.exec("ALTER TABLE links ADD COLUMN memo TEXT");
+}
+
 const MAX_HISTORY_ENTRIES = 50;
 
 interface SettingsRow {
   title: string;
   themeColor: string;
   weatherLocation: string | null;
+  useFavicon: number;
 }
 interface CategoryRow {
   id: number;
@@ -191,17 +207,28 @@ interface NewsRow {
   text: string;
   pinned: number;
   expiresAt: string | null;
+  label: string | null;
+}
+
+interface LinkRow {
+  name: string;
+  url: string;
+  icon: string;
+  memo: string | null;
 }
 
 export function getConfig(): PortalConfig | null {
   const settings = db
-    .prepare("SELECT title, theme_color AS themeColor, weather_location AS weatherLocation FROM settings WHERE id = 1")
+    .prepare(
+      "SELECT title, theme_color AS themeColor, weather_location AS weatherLocation, " +
+        "use_favicon AS useFavicon FROM settings WHERE id = 1",
+    )
     .get<SettingsRow>();
   if (!settings) return null;
 
   const news: NewsItem[] = db
     .prepare(
-      "SELECT date, text, pinned, expires_at AS expiresAt FROM news " +
+      "SELECT date, text, pinned, expires_at AS expiresAt, label FROM news " +
         "ORDER BY pinned DESC, sort_order ASC, id ASC",
     )
     .all<NewsRow>()
@@ -210,6 +237,7 @@ export function getConfig(): PortalConfig | null {
       text: row.text,
       ...(row.pinned ? { pinned: true } : {}),
       ...(row.expiresAt ? { expiresAt: row.expiresAt } : {}),
+      ...(row.label ? { label: row.label as NewsItem["label"] } : {}),
     }));
 
   const clickCounts = getClickCounts();
@@ -222,15 +250,18 @@ export function getConfig(): PortalConfig | null {
     .map((cat) => {
       const links: LinkItem[] = db
         .prepare(
-          "SELECT name, url, icon FROM links WHERE category_id = ? ORDER BY sort_order ASC, id ASC",
+          "SELECT name, url, icon, memo FROM links WHERE category_id = ? ORDER BY sort_order ASC, id ASC",
         )
-        .all<LinkItem>(cat.id)
+        .all<LinkRow>(cat.id)
         .map((link) => {
           const clicks = clickCounts[link.url];
           const addedAt = addedAtMap[link.url];
           const broken = checkStatusMap[link.url] === false;
           return {
-            ...link,
+            name: link.name,
+            url: link.url,
+            icon: link.icon,
+            ...(link.memo ? { memo: link.memo } : {}),
             ...(clicks ? { clicks } : {}),
             ...(addedAt ? { addedAt } : {}),
             ...(broken ? { broken: true } : {}),
@@ -245,6 +276,7 @@ export function getConfig(): PortalConfig | null {
     news,
     categories,
     ...(settings.weatherLocation ? { weatherLocation: settings.weatherLocation } : {}),
+    ...(settings.useFavicon ? { useFavicon: true } : {}),
   };
 }
 
@@ -264,17 +296,17 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
   const nextVersion = current ? current.version + 1 : 1;
 
   db.prepare(
-    "INSERT INTO settings (id, title, theme_color, version, weather_location) VALUES (1, ?, ?, ?, ?) " +
+    "INSERT INTO settings (id, title, theme_color, version, weather_location, use_favicon) VALUES (1, ?, ?, ?, ?, ?) " +
       "ON CONFLICT(id) DO UPDATE SET title = excluded.title, theme_color = excluded.theme_color, " +
-      "version = excluded.version, weather_location = excluded.weather_location",
-  ).run(config.title, config.themeColor, nextVersion, config.weatherLocation || null);
+      "version = excluded.version, weather_location = excluded.weather_location, use_favicon = excluded.use_favicon",
+  ).run(config.title, config.themeColor, nextVersion, config.weatherLocation || null, config.useFavicon ? 1 : 0);
 
   db.exec("DELETE FROM news");
   const insertNews = db.prepare(
-    "INSERT INTO news (date, text, sort_order, pinned, expires_at) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO news (date, text, sort_order, pinned, expires_at, label) VALUES (?, ?, ?, ?, ?, ?)",
   );
   config.news.forEach((item, idx) =>
-    insertNews.run(item.date, item.text, idx, item.pinned ? 1 : 0, item.expiresAt || null)
+    insertNews.run(item.date, item.text, idx, item.pinned ? 1 : 0, item.expiresAt || null, item.label || null)
   );
 
   db.exec("DELETE FROM links");
@@ -283,7 +315,7 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
     "INSERT INTO categories (name, sort_order, hidden) VALUES (?, ?, ?)",
   );
   const insertLink = db.prepare(
-    "INSERT INTO links (category_id, name, url, icon, sort_order) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO links (category_id, name, url, icon, sort_order, memo) VALUES (?, ?, ?, ?, ?, ?)",
   );
   const insertAddedAt = db.prepare(
     "INSERT INTO link_added_at (url, added_at) VALUES (?, ?) ON CONFLICT(url) DO NOTHING",
@@ -293,7 +325,7 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
     insertCategory.run(cat.name, cIdx, cat.hidden ? 1 : 0);
     const categoryId = db.lastInsertRowId;
     cat.links.forEach((link, lIdx) => {
-      insertLink.run(categoryId, link.name, link.url, link.icon, lIdx);
+      insertLink.run(categoryId, link.name, link.url, link.icon, lIdx, link.memo || null);
       insertAddedAt.run(link.url, now);
     });
   });

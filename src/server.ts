@@ -160,6 +160,8 @@ async function refreshWeather(): Promise<void> {
           location,
           resolvedName: null,
           tempC: null,
+          tempMaxC: null,
+          tempMinC: null,
           weatherCode: null,
           fetchedAt: new Date().toISOString(),
           error: "指定された地点が見つかりませんでした",
@@ -169,14 +171,19 @@ async function refreshWeather(): Promise<void> {
     }
     const wx = await fetchJsonWithTimeout(
       `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}` +
-        `&current=temperature_2m,weather_code&timezone=auto`,
+        `&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&timezone=auto`,
       controller,
-    ) as { current?: { temperature_2m: number; weather_code: number } };
+    ) as {
+      current?: { temperature_2m: number; weather_code: number };
+      daily?: { temperature_2m_max: number[]; temperature_2m_min: number[] };
+    };
     if (seq === weatherRefreshSeq) {
       weatherCache = {
         location,
         resolvedName: place.name,
         tempC: wx.current?.temperature_2m ?? null,
+        tempMaxC: wx.daily?.temperature_2m_max?.[0] ?? null,
+        tempMinC: wx.daily?.temperature_2m_min?.[0] ?? null,
         weatherCode: wx.current?.weather_code ?? null,
         fetchedAt: new Date().toISOString(),
         error: wx.current ? null : "天気データの形式が不正です",
@@ -188,6 +195,8 @@ async function refreshWeather(): Promise<void> {
         location,
         resolvedName: null,
         tempC: null,
+        tempMaxC: null,
+        tempMinC: null,
         weatherCode: null,
         fetchedAt: new Date().toISOString(),
         error: describeFetchError(err),
@@ -280,7 +289,16 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
 
   if (url.pathname === "/api/weather" && req.method === "GET") {
     return jsonResponse(
-      weatherCache ?? { location: null, resolvedName: null, tempC: null, weatherCode: null, fetchedAt: null, error: null },
+      weatherCache ?? {
+        location: null,
+        resolvedName: null,
+        tempC: null,
+        tempMaxC: null,
+        tempMinC: null,
+        weatherCode: null,
+        fetchedAt: null,
+        error: null,
+      },
     );
   }
 

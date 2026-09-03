@@ -4,7 +4,7 @@
 /// <reference lib="dom" />
 /// <reference lib="dom.iterable" />
 
-import type { Category, PortalConfig, WeatherInfo } from "../types.ts";
+import type { Category, NewsLabel, PortalConfig, WeatherInfo } from "../types.ts";
 
 // リンクの追加からこの日数以内はNEWバッジを表示する(SPEC.md §5.1.2)。
 const NEW_BADGE_DAYS = 7;
@@ -30,10 +30,20 @@ function renderWeather(weather: WeatherInfo): void {
     el.style.display = "none";
     return;
   }
+  const rangeHtml = weather.tempMaxC !== null && weather.tempMinC !== null
+    ? `<span class="weather-range">${Math.round(weather.tempMaxC)}° / ${Math.round(weather.tempMinC)}°</span>`
+    : "";
   el.style.display = "flex";
   el.innerHTML = `<span class="weather-icon">${weatherEmoji(weather.weatherCode)}</span>` +
-    `<span class="weather-temp">${Math.round(weather.tempC)}°C</span>` +
+    `<span class="weather-temp">${Math.round(weather.tempC)}°C</span>${rangeHtml}` +
     `<span class="weather-place">${escapeHtml(weather.resolvedName || weather.location)}</span>`;
+}
+
+// お知らせの種別ラベル(SPEC.md §3.2, §5.1.2)を色分けバッジのHTMLに変換する。未設定(「一般」)の場合は表示しない。
+function newsLabelBadge(label: NewsLabel | undefined): string {
+  if (label === "important") return `<span class="news-label news-label-important">重要</span>`;
+  if (label === "maintenance") return `<span class="news-label news-label-maintenance">メンテナンス</span>`;
+  return "";
 }
 
 function hexToRgb(hex: string): string | null {
@@ -126,9 +136,12 @@ function renderPortal(config: PortalConfig): void {
       li.className = item.pinned ? "news-item news-pinned search-item" : "news-item search-item";
       li.dataset.search = item.text.toLowerCase();
       li.dataset.name = item.text;
+      li.dataset.label = item.label || "";
       const pinBadge = item.pinned ? `<span class="news-pin" title="常に先頭に表示">📌</span>` : "";
       li.innerHTML =
-        `${pinBadge}<span class="news-date">${escapeHtml(item.date)}</span><span class="news-text">${escapeHtml(item.text)}</span>`;
+        `${pinBadge}${newsLabelBadge(item.label)}<span class="news-date">${escapeHtml(item.date)}</span><span class="news-text">${
+          escapeHtml(item.text)
+        }</span>`;
       newsList.appendChild(li);
     });
   } else {
@@ -178,7 +191,29 @@ function renderPortal(config: PortalConfig): void {
         ? `<span class="card-badges-left">${newHtml}${brokenHtml}</span>`
         : "";
       a.innerHTML =
-        `${leftBadgesHtml}<span class="card-icon">${escapeHtml(link.icon)}</span><span class="card-name">${escapeHtml(link.name)}</span>${clicksHtml}`;
+        `${leftBadgesHtml}<span class="card-icon"></span><span class="card-name">${escapeHtml(link.name)}</span>${clicksHtml}`;
+      // アイコン絵文字の代わりにリンク先のファビコンを表示するオプション(設定useFavicon。SPEC.md §5.1.2)。
+      // リンク先ホストの/favicon.icoをブラウザから直接参照するだけで、新規の外部API連携は発生しない。
+      // 取得に失敗した場合(faviconが無い等)は絵文字アイコンにフォールバックする。
+      const iconEl = a.querySelector<HTMLElement>(".card-icon")!;
+      const trimmedUrl = link.url.trim();
+      if (config.useFavicon && /^https?:\/\//i.test(trimmedUrl)) {
+        try {
+          const img = document.createElement("img");
+          img.className = "card-favicon";
+          img.src = `${new URL(trimmedUrl).origin}/favicon.ico`;
+          img.alt = "";
+          img.onerror = () => {
+            iconEl.textContent = link.icon;
+          };
+          iconEl.appendChild(img);
+        } catch {
+          iconEl.textContent = link.icon;
+        }
+      } else {
+        iconEl.textContent = link.icon;
+      }
+      if (link.memo) a.title = link.memo;
       a.addEventListener("click", () => reportClick(link.url));
       grid.appendChild(a);
     });
@@ -205,47 +240,53 @@ function renderPortal(config: PortalConfig): void {
   });
 }
 
-document.getElementById("search-input")!.addEventListener("keyup", (e) => {
-  const term = (e.target as HTMLInputElement).value.toLowerCase();
+// 検索ボックスの語句とお知らせ種別フィルタ(SPEC.md §5.1.2)を組み合わせて表示/非表示を決める。
+// リンクカードは検索語のみ、お知らせは検索語+種別フィルタの両方に一致した場合のみ表示する。
+function applyFilters(): void {
+  const term = (document.getElementById("search-input") as HTMLInputElement).value.toLowerCase();
+  const labelFilter = (document.getElementById("news-label-filter") as HTMLSelectElement).value;
   const newsListEl = document.getElementById("news-list")!;
   const newsAreaEl = document.getElementById("news-area")!;
 
-  if (term === "") {
-    // 検索ボックスが空の場合はすべて表示し、ハイライトも解除する(検索対象はリンクカード・お知らせの両方)
-    document.querySelectorAll<HTMLElement>(".search-item").forEach((item) => {
-      item.style.display = "flex";
-      const nameEl = item.querySelector(".card-name, .news-text");
-      if (nameEl) nameEl.innerHTML = escapeHtml(item.dataset.name ?? "");
-    });
-    document.querySelectorAll<HTMLElement>(".category-section").forEach((sec) => {
+  document.querySelectorAll<HTMLElement>(".search-item").forEach((item) => {
+    const isNews = item.parentElement === newsListEl;
+    const searchMatched = term === "" || (item.dataset.search?.includes(term) ?? false);
+    const labelMatched = !isNews || labelFilter === "" || item.dataset.label === labelFilter;
+    const matched = searchMatched && labelMatched;
+    item.style.display = matched ? "flex" : "none";
+    const nameEl = item.querySelector(".card-name, .news-text");
+    if (nameEl) {
+      nameEl.innerHTML = matched && term !== ""
+        ? highlightMatch(item.dataset.name ?? "", term)
+        : escapeHtml(item.dataset.name ?? "");
+    }
+  });
+  document.querySelectorAll<HTMLElement>(".category-section").forEach((sec) => {
+    // カテゴリの表示/非表示は検索語のみに左右される(お知らせ種別フィルタは対象外)。検索語が
+    // 空の場合は常に表示する(リンクが1件もないカテゴリでもvisibleCountが0になり誤って
+    // 非表示のままになってしまうのを防ぐため、visibleCountでの判定は検索語がある場合のみ行う)。
+    if (term === "") {
       sec.style.display = "block";
-    });
-    // お知らせ欄は元々お知らせが1件もない場合は表示しない(renderPortal()と同じ判定)
-    newsAreaEl.style.display = newsListEl.children.length > 0 ? "block" : "none";
-  } else {
-    // 検索キーワードがある場合はフィルタリングし、マッチ部分をハイライトする(リンクカード・お知らせの両方が対象)。
-    // 折りたたみ中でも検索結果は必ず見えるよう、マッチしたカテゴリは展開する。
-    document.querySelectorAll<HTMLElement>(".search-item").forEach((item) => {
-      const matched = item.dataset.search?.includes(term) ?? false;
-      item.style.display = matched ? "flex" : "none";
-      const nameEl = item.querySelector(".card-name, .news-text");
-      if (nameEl) {
-        nameEl.innerHTML = matched ? highlightMatch(item.dataset.name ?? "", term) : escapeHtml(item.dataset.name ?? "");
-      }
-    });
-    document.querySelectorAll<HTMLElement>(".category-section").forEach((sec) => {
-      const visibleCount = Array.from(sec.querySelectorAll<HTMLElement>(".search-item")).filter(
-        (el) => el.style.display !== "none",
-      ).length;
-      sec.style.display = visibleCount > 0 ? "block" : "none";
-      if (visibleCount > 0) sec.classList.remove("collapsed");
-    });
-    const visibleNewsCount = Array.from(newsListEl.querySelectorAll<HTMLElement>(".search-item")).filter(
+      return;
+    }
+    const visibleCount = Array.from(sec.querySelectorAll<HTMLElement>(".search-item")).filter(
       (el) => el.style.display !== "none",
     ).length;
-    newsAreaEl.style.display = visibleNewsCount > 0 ? "block" : "none";
-  }
-});
+    sec.style.display = visibleCount > 0 ? "block" : "none";
+    // 折りたたみ中でも検索結果は必ず見えるよう、マッチしたカテゴリは展開する。
+    if (visibleCount > 0) sec.classList.remove("collapsed");
+  });
+  const visibleNewsCount = Array.from(newsListEl.querySelectorAll<HTMLElement>(".search-item")).filter(
+    (el) => el.style.display !== "none",
+  ).length;
+  // お知らせ欄は元々お知らせが1件もない場合は表示しない(renderPortal()と同じ判定)
+  newsAreaEl.style.display = (term === "" && labelFilter === "" ? newsListEl.children.length > 0 : visibleNewsCount > 0)
+    ? "block"
+    : "none";
+}
+
+document.getElementById("search-input")!.addEventListener("keyup", applyFilters);
+document.getElementById("news-label-filter")!.addEventListener("change", applyFilters);
 
 // カテゴリの一括折りたたみ/展開(このブラウザタブ内だけの表示状態。保存・永続化は行わない。SPEC.md §1.3)
 document.getElementById("collapse-all-btn")!.addEventListener("click", () => {
@@ -253,6 +294,22 @@ document.getElementById("collapse-all-btn")!.addEventListener("click", () => {
 });
 document.getElementById("expand-all-btn")!.addEventListener("click", () => {
   document.querySelectorAll<HTMLElement>(".category-section").forEach((sec) => sec.classList.remove("collapsed"));
+});
+
+// 検索のキーボードショートカット(SPEC.md §5.1.2): 「/」で検索欄にフォーカス、Escでクリアしてフォーカスを外す。
+// 他の入力欄にフォーカス中の「/」は文字入力として扱う(ショートカットとして横取りしない)。
+document.addEventListener("keydown", (e) => {
+  const searchInput = document.getElementById("search-input") as HTMLInputElement;
+  const active = document.activeElement;
+  const isTyping = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement;
+  if (e.key === "/" && !isTyping) {
+    e.preventDefault();
+    searchInput.focus();
+  } else if (e.key === "Escape" && active === searchInput) {
+    searchInput.value = "";
+    applyFilters();
+    searchInput.blur();
+  }
 });
 
 // サーバーAPI(SQLiteデータベース)から設定を読み込んで表示
