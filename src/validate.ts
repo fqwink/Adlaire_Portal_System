@@ -30,6 +30,12 @@ export function validateConfig(raw: unknown): PortalConfig {
   if (!Array.isArray(config.categories)) {
     throw new Error("カテゴリデータが不正です");
   }
+  if (
+    config.weatherLocation !== undefined && config.weatherLocation !== null &&
+    typeof config.weatherLocation !== "string"
+  ) {
+    throw new Error("天気表示の地点名が不正です");
+  }
 
   const news = Array.isArray(config.news) ? config.news : [];
   news.forEach((item, i) => {
@@ -71,5 +77,6 @@ export function validateConfig(raw: unknown): PortalConfig {
     themeColor: config.themeColor,
     news,
     categories: config.categories,
+    ...(config.weatherLocation ? { weatherLocation: config.weatherLocation } : {}),
   } as PortalConfig;
 }

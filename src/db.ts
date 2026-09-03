@@ -26,7 +26,8 @@ db.exec(`
     id INTEGER PRIMARY KEY CHECK (id = 1),
     title TEXT NOT NULL,
     theme_color TEXT NOT NULL,
-    version INTEGER NOT NULL DEFAULT 1
+    version INTEGER NOT NULL DEFAULT 1,
+    weather_location TEXT
   );
 
   CREATE TABLE IF NOT EXISTS news (
@@ -91,6 +92,9 @@ const settingsColumns = db.prepare("PRAGMA table_info(settings)").all<{ name: st
 if (!settingsColumns.some((c) => c.name === "version")) {
   db.exec("ALTER TABLE settings ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
 }
+if (!settingsColumns.some((c) => c.name === "weather_location")) {
+  db.exec("ALTER TABLE settings ADD COLUMN weather_location TEXT");
+}
 
 // 旧スキーマ(pinned/expires_at列なし)で作成済みのDBに対する軽量マイグレーション
 const newsColumns = db.prepare("PRAGMA table_info(news)").all<{ name: string }>();
@@ -112,6 +116,7 @@ const MAX_HISTORY_ENTRIES = 50;
 interface SettingsRow {
   title: string;
   themeColor: string;
+  weatherLocation: string | null;
 }
 interface CategoryRow {
   id: number;
@@ -190,7 +195,7 @@ interface NewsRow {
 
 export function getConfig(): PortalConfig | null {
   const settings = db
-    .prepare("SELECT title, theme_color AS themeColor FROM settings WHERE id = 1")
+    .prepare("SELECT title, theme_color AS themeColor, weather_location AS weatherLocation FROM settings WHERE id = 1")
     .get<SettingsRow>();
   if (!settings) return null;
 
@@ -234,7 +239,13 @@ export function getConfig(): PortalConfig | null {
       return { name: cat.name, links, ...(cat.hidden ? { hidden: true } : {}) };
     });
 
-  return { title: settings.title, themeColor: settings.themeColor, news, categories };
+  return {
+    title: settings.title,
+    themeColor: settings.themeColor,
+    news,
+    categories,
+    ...(settings.weatherLocation ? { weatherLocation: settings.weatherLocation } : {}),
+  };
 }
 
 // 現在の設定バージョン(楽観的排他制御用)。設定データが未作成の場合は null。
@@ -253,9 +264,10 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
   const nextVersion = current ? current.version + 1 : 1;
 
   db.prepare(
-    "INSERT INTO settings (id, title, theme_color, version) VALUES (1, ?, ?, ?) " +
-      "ON CONFLICT(id) DO UPDATE SET title = excluded.title, theme_color = excluded.theme_color, version = excluded.version",
-  ).run(config.title, config.themeColor, nextVersion);
+    "INSERT INTO settings (id, title, theme_color, version, weather_location) VALUES (1, ?, ?, ?, ?) " +
+      "ON CONFLICT(id) DO UPDATE SET title = excluded.title, theme_color = excluded.theme_color, " +
+      "version = excluded.version, weather_location = excluded.weather_location",
+  ).run(config.title, config.themeColor, nextVersion, config.weatherLocation || null);
 
   db.exec("DELETE FROM news");
   const insertNews = db.prepare(

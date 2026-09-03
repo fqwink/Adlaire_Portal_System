@@ -1,6 +1,7 @@
 // Adlaire Portal System - Denoサーバー
 // 静的ファイル(public/配下)の配信、設定データのREST API、リンク到達確認API(check-links)、
-// クリック集計・変更履歴・ヘルスチェックAPI、DBダウンロード、リンクの定期自動チェックを提供する。
+// クリック集計・変更履歴・ヘルスチェックAPI、DBダウンロード、リンクの定期自動チェック、
+// 天気情報(外部API連携)を提供する。
 
 import { serveDir } from "jsr:@std/http@^1.1.3/file-server";
 import { fromFileUrl } from "jsr:@std/path@^1.1.6";
@@ -18,6 +19,7 @@ import {
   VersionConflictError,
 } from "./db.ts";
 import { isValidUrl } from "./validate.ts";
+import type { WeatherInfo } from "./types.ts";
 
 const PORT = Number(Deno.env.get("PORT") ?? "3000");
 const PUBLIC_DIR = fromFileUrl(new URL("../public/", import.meta.url));
@@ -27,6 +29,8 @@ const LINK_CHECK_TIMEOUT_MS = 5000;
 const MAX_LINKS_TO_CHECK = 200;
 const BACKUP_INTERVAL_MINUTES = Number(Deno.env.get("BACKUP_INTERVAL_MINUTES") ?? "60");
 const LINK_CHECK_INTERVAL_MINUTES = Number(Deno.env.get("LINK_CHECK_INTERVAL_MINUTES") ?? "360");
+const WEATHER_REFRESH_MINUTES = Number(Deno.env.get("WEATHER_REFRESH_MINUTES") ?? "30");
+const WEATHER_FETCH_TIMEOUT_MS = 10000;
 const SERVER_START_TIME = Date.now();
 
 function jsonResponse(body: unknown, status = 200, version?: number | null): Response {
@@ -90,6 +94,76 @@ async function checkOneLink(url: string): Promise<LinkCheckResult> {
   return { url, ok: false, status: null, error: "確認に失敗しました" };
 }
 
+// 天気情報のキャッシュ(SQLiteには保存しない、プロセスメモリ上だけのライブデータ)。
+// nullは「まだ一度も取得を試みていない」状態を表す(location未設定の場合はこのままになる)。
+let weatherCache: WeatherInfo | null = null;
+
+async function fetchJsonWithTimeout(url: string): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), WEATHER_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// 設定されている地点名(weatherLocation)を、外部API(Open-Meteo。APIキー不要)で
+// ジオコーディング→天気取得し、weatherCacheを更新する(SPEC.md §2.5)。
+// 宛先ホストは固定(open-meteo.com)で、locationは検索クエリ文字列として渡すのみのため、
+// リンクチェック(§4.4)のような宛先ホスト自体を操作されるSSRFのおそれはない。
+async function refreshWeather(): Promise<void> {
+  const config = getConfig();
+  const location = config?.weatherLocation;
+  if (!location) {
+    weatherCache = null;
+    return;
+  }
+  try {
+    const geo = await fetchJsonWithTimeout(
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=ja&format=json`,
+    ) as { results?: { latitude: number; longitude: number; name: string }[] };
+    const place = geo.results?.[0];
+    if (!place) {
+      weatherCache = {
+        location,
+        resolvedName: null,
+        tempC: null,
+        weatherCode: null,
+        fetchedAt: new Date().toISOString(),
+        error: "指定された地点が見つかりませんでした",
+      };
+      return;
+    }
+    const wx = await fetchJsonWithTimeout(
+      `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}` +
+        `&current=temperature_2m,weather_code&timezone=auto`,
+    ) as { current?: { temperature_2m: number; weather_code: number } };
+    weatherCache = {
+      location,
+      resolvedName: place.name,
+      tempC: wx.current?.temperature_2m ?? null,
+      weatherCode: wx.current?.weather_code ?? null,
+      fetchedAt: new Date().toISOString(),
+      error: wx.current ? null : "天気データの形式が不正です",
+    };
+  } catch (err) {
+    const message = err instanceof DOMException && err.name === "AbortError"
+      ? "タイムアウトしました"
+      : (err as Error).message;
+    weatherCache = {
+      location,
+      resolvedName: null,
+      tempC: null,
+      weatherCode: null,
+      fetchedAt: new Date().toISOString(),
+      error: message,
+    };
+  }
+}
+
 async function handleApi(req: Request, url: URL): Promise<Response> {
   if (url.pathname === "/healthz" && req.method === "GET") {
     return jsonResponse({ status: "ok", uptimeSeconds: Math.round((Date.now() - SERVER_START_TIME) / 1000) });
@@ -108,6 +182,9 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       const body = await readJsonBody(req);
       const expectedVersion = parseIfMatch(req);
       const updated = replaceConfig(body, expectedVersion);
+      if (updated.weatherLocation !== weatherCache?.location) {
+        refreshWeather().catch((err) => console.error("天気情報の更新に失敗しました:", err));
+      }
       return jsonResponse(updated, 200, getVersion());
     } catch (err) {
       if (err instanceof VersionConflictError) {
@@ -120,6 +197,9 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
   if (url.pathname === "/api/config/reset" && req.method === "POST") {
     try {
       const reset = resetToSeed();
+      if (reset.weatherLocation !== weatherCache?.location) {
+        refreshWeather().catch((err) => console.error("天気情報の更新に失敗しました:", err));
+      }
       return jsonResponse(reset, 200, getVersion());
     } catch (err) {
       return jsonResponse({ error: (err as Error).message }, 500);
@@ -168,6 +248,12 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
       return jsonResponse({ error: "指定された変更履歴が見つかりません" }, 404);
     }
     return jsonResponse(entry);
+  }
+
+  if (url.pathname === "/api/weather" && req.method === "GET") {
+    return jsonResponse(
+      weatherCache ?? { location: null, resolvedName: null, tempC: null, weatherCode: null, fetchedAt: null, error: null },
+    );
   }
 
   if (url.pathname === "/api/backup/download" && req.method === "GET") {
@@ -236,6 +322,15 @@ if (LINK_CHECK_INTERVAL_MINUTES > 0) {
   setInterval(() => {
     runScheduledLinkCheck().catch((err) => console.error("定期リンクチェックに失敗しました:", err));
   }, LINK_CHECK_INTERVAL_MINUTES * 60 * 1000);
+}
+
+// 天気情報の定期更新(SPEC.md §2.5)。weatherLocationが未設定の場合は何も取得しない(refreshWeather()内で判定)。
+// WEATHER_REFRESH_MINUTES=0 で無効化できる。
+if (WEATHER_REFRESH_MINUTES > 0) {
+  refreshWeather().catch((err) => console.error("初回の天気情報取得に失敗しました:", err));
+  setInterval(() => {
+    refreshWeather().catch((err) => console.error("天気情報の更新に失敗しました:", err));
+  }, WEATHER_REFRESH_MINUTES * 60 * 1000);
 }
 
 console.log(`Adlaire Portal System サーバーを起動しました: http://localhost:${PORT}`);

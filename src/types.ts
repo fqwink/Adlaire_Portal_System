@@ -40,4 +40,18 @@ export interface PortalConfig {
   themeColor: string;
   news: NewsItem[];
   categories: Category[];
+  // 天気表示に使う地点名(Open-Meteoのジオコーディングに渡す文字列。例: "Tokyo")。編集者が指定する
+  // 通常の入力項目。省略・空文字列の場合、閲覧画面には天気ウィジェットを表示しない。
+  weatherLocation?: string;
+}
+
+// GET /api/weather のレスポンス形式。config(PortalConfig)には含まれない、
+// サーバーがOpen-Meteo(外部API、APIキー不要)から定期的に取得する live データ。
+export interface WeatherInfo {
+  location: string | null; // 設定されている地点名(weatherLocationをそのまま反映)。未設定の場合はnull
+  resolvedName: string | null; // ジオコーディングで解決された地名(取得できた場合)
+  tempC: number | null;
+  weatherCode: number | null; // WMO Weather interpretation code
+  fetchedAt: string | null; // ISO 8601形式。データ取得日時
+  error: string | null; // 取得に失敗した場合のエラーメッセージ
 }
