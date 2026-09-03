@@ -40,6 +40,12 @@ export function validateConfig(raw: unknown): PortalConfig {
   if (config.useFavicon !== undefined && typeof config.useFavicon !== "boolean") {
     throw new Error("ファビコン表示設定が不正です");
   }
+  if (config.archiveExpiredNews !== undefined && typeof config.archiveExpiredNews !== "boolean") {
+    throw new Error("お知らせのアーカイブ設定が不正です");
+  }
+  if (config.pinImportantNews !== undefined && typeof config.pinImportantNews !== "boolean") {
+    throw new Error("重要ラベルの先頭表示設定が不正です");
+  }
 
   const news = Array.isArray(config.news) ? config.news : [];
   news.forEach((item, i) => {
@@ -69,6 +75,12 @@ export function validateConfig(raw: unknown): PortalConfig {
     if (cat.hidden !== undefined && typeof cat.hidden !== "boolean") {
       throw new Error(`カテゴリ[${i}]の公開状態の指定が不正です`);
     }
+    if (cat.icon !== undefined && typeof cat.icon !== "string") {
+      throw new Error(`カテゴリ[${i}]のアイコンが不正です`);
+    }
+    if (cat.displayMode !== undefined && cat.displayMode !== "grid" && cat.displayMode !== "list") {
+      throw new Error(`カテゴリ[${i}]の表示形式が不正です`);
+    }
     cat.links.forEach((link, j) => {
       if (!link || typeof link.name !== "string" || typeof link.icon !== "string") {
         throw new Error(`カテゴリ[${i}]のリンク[${j}]が不正です`);
@@ -89,5 +101,7 @@ export function validateConfig(raw: unknown): PortalConfig {
     categories: config.categories,
     ...(config.weatherLocation ? { weatherLocation: config.weatherLocation } : {}),
     ...(config.useFavicon ? { useFavicon: config.useFavicon } : {}),
+    ...(config.archiveExpiredNews ? { archiveExpiredNews: config.archiveExpiredNews } : {}),
+    ...(config.pinImportantNews ? { pinImportantNews: config.pinImportantNews } : {}),
   } as PortalConfig;
 }
