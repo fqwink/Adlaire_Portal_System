@@ -293,7 +293,7 @@ TypeScriptファイルをGUI操作で組み立てる、ローカル専用の補�
 | 項目 | 仕様 |
 |---|---|
 | 対応Denoバージョン（ビルド時のみ） | v2.9以上 |
-| 外部依存 | なし（`src/`配下は相対importのみで完結し、npm/jsrパッケージへの依存を持たない） |
+| 外部依存 | 配信物・実装(`src/`配下)は相対importのみで完結し、npm/jsrパッケージへの依存を持たない。`deno task preview`（ローカル動作確認用サーバー）のみ`jsr:@std/http`に依存し、そのバージョンを`deno.lock`で固定する |
 | ソースの正本 | TypeScript（`src/`配下）。JavaScript（`public/js/`配下）は `deno task build` によるビルド生成物であり、直接編集しない |
 | 型チェック | `deno task check`（`deno check`）で`strict`モードの型チェックを実施する |
 | 実行環境（本番） | 任意の静的ホスティングサービス。サーバーサイドの実行環境・データベースを一切必要としない |
