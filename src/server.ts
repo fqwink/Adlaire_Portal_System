@@ -1,6 +1,6 @@
 // Adlaire Portal System - Denoサーバー
 // 静的ファイル(public/配下)の配信、設定データのREST API、リンク到達確認API(check-links)、
-// クリック集計・変更履歴・ヘルスチェックAPIを提供する。
+// クリック集計・変更履歴・ヘルスチェックAPI、DBダウンロード、リンクの定期自動チェックを提供する。
 
 import { serveDir } from "jsr:@std/http@^1.1.3/file-server";
 import { fromFileUrl } from "jsr:@std/path@^1.1.6";
@@ -10,7 +10,9 @@ import {
   getHistoryEntry,
   getHistoryList,
   getVersion,
+  readDbFileBytes,
   recordClick,
+  recordLinkCheckResults,
   replaceConfig,
   resetToSeed,
   VersionConflictError,
@@ -24,6 +26,7 @@ const MAX_BODY_BYTES = 1024 * 1024; // 1MB
 const LINK_CHECK_TIMEOUT_MS = 5000;
 const MAX_LINKS_TO_CHECK = 200;
 const BACKUP_INTERVAL_MINUTES = Number(Deno.env.get("BACKUP_INTERVAL_MINUTES") ?? "60");
+const LINK_CHECK_INTERVAL_MINUTES = Number(Deno.env.get("LINK_CHECK_INTERVAL_MINUTES") ?? "360");
 const SERVER_START_TIME = Date.now();
 
 function jsonResponse(body: unknown, status = 200, version?: number | null): Response {
@@ -167,6 +170,22 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     return jsonResponse(entry);
   }
 
+  if (url.pathname === "/api/backup/download" && req.method === "GET") {
+    try {
+      const bytes = await readDbFileBytes();
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      return new Response(new Blob([new Uint8Array(bytes)]), {
+        status: 200,
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-disposition": `attachment; filename="portal-${timestamp}.db"`,
+        },
+      });
+    } catch (err) {
+      return jsonResponse({ error: (err as Error).message }, 500);
+    }
+  }
+
   return jsonResponse({ error: "Not Found" }, 404);
 }
 
@@ -196,6 +215,27 @@ if (BACKUP_INTERVAL_MINUTES > 0) {
   setInterval(() => {
     backupDatabase().catch((err) => console.error("定期バックアップに失敗しました:", err));
   }, BACKUP_INTERVAL_MINUTES * 60 * 1000);
+}
+
+// 全リンクの定期自動チェック(SPEC.md §5.1.2)。手動チェック(POST /api/check-links)とは別に、
+// サーバー側で定期的に到達可否を確認し、結果を閲覧画面のバッジ表示に使う。
+// LINK_CHECK_INTERVAL_MINUTES=0 で無効化できる。
+async function runScheduledLinkCheck(): Promise<void> {
+  const config = getConfig();
+  if (!config) return;
+  const urls = config.categories.flatMap((cat) => cat.links.map((link) => link.url));
+  if (urls.length === 0) return;
+  const results = await Promise.all(
+    urls.map(async (url) => ({ url, ok: (await checkOneLink(url)).ok })),
+  );
+  recordLinkCheckResults(results);
+}
+
+if (LINK_CHECK_INTERVAL_MINUTES > 0) {
+  runScheduledLinkCheck().catch((err) => console.error("初回の定期リンクチェックに失敗しました:", err));
+  setInterval(() => {
+    runScheduledLinkCheck().catch((err) => console.error("定期リンクチェックに失敗しました:", err));
+  }, LINK_CHECK_INTERVAL_MINUTES * 60 * 1000);
 }
 
 console.log(`Adlaire Portal System サーバーを起動しました: http://localhost:${PORT}`);

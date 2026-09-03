@@ -111,7 +111,10 @@ function renderPortal(config: PortalConfig): void {
   navList.innerHTML = "";
   contentArea.innerHTML = "";
 
-  config.categories.forEach((cat: Category, idx: number) => {
+  // 「下書き」状態(hidden: true)のカテゴリは閲覧画面には表示しない(編集画面では引き続き編集できる。SPEC.md §3.3, §5.1.2)。
+  const visibleCategories = config.categories.filter((cat) => !cat.hidden);
+
+  visibleCategories.forEach((cat: Category, idx: number) => {
     const navLi = document.createElement("li");
     navLi.className = "nav-item";
     navLi.innerHTML = `<a href="#cat-${idx}" class="nav-link"><span>${escapeHtml(cat.name)}</span><span class="nav-count">${cat.links.length}</span></a>`;
@@ -139,8 +142,14 @@ function renderPortal(config: PortalConfig): void {
       const isNew = link.addedAt &&
         (now.getTime() - new Date(link.addedAt).getTime()) / (1000 * 60 * 60 * 24) <= NEW_BADGE_DAYS;
       const newHtml = isNew ? `<span class="card-new" title="最近追加されたリンク">NEW</span>` : "";
+      const brokenHtml = link.broken
+        ? `<span class="card-broken" title="定期チェックで到達できませんでした">⚠️</span>`
+        : "";
+      const leftBadgesHtml = newHtml || brokenHtml
+        ? `<span class="card-badges-left">${newHtml}${brokenHtml}</span>`
+        : "";
       a.innerHTML =
-        `${newHtml}<span class="card-icon">${escapeHtml(link.icon)}</span><span class="card-name">${escapeHtml(link.name)}</span>${clicksHtml}`;
+        `${leftBadgesHtml}<span class="card-icon">${escapeHtml(link.icon)}</span><span class="card-name">${escapeHtml(link.name)}</span>${clicksHtml}`;
       a.addEventListener("click", () => reportClick(link.url));
       grid.appendChild(a);
     });

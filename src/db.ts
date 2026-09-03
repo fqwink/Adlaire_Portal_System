@@ -41,7 +41,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS categories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    sort_order INTEGER NOT NULL
+    sort_order INTEGER NOT NULL,
+    hidden INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS links (
@@ -74,6 +75,15 @@ db.exec(`
     changed_at TEXT NOT NULL,
     config_json TEXT NOT NULL
   );
+
+  -- リンクURLごとの定期自動チェック(SPEC.md §5.1.2)の最新結果。link_clicks/link_added_atと
+  -- 同じ理由でURL文字列をキーにする。手動チェック(POST /api/check-links)の結果はここには
+  -- 保存されない(その場限りの確認のため。SPEC.md §4.4)。
+  CREATE TABLE IF NOT EXISTS link_check_status (
+    url TEXT PRIMARY KEY,
+    ok INTEGER NOT NULL,
+    checked_at TEXT NOT NULL
+  );
 `);
 
 // 旧スキーマ(version列なし)で作成済みのDBに対する軽量マイグレーション
@@ -91,6 +101,12 @@ if (!newsColumns.some((c) => c.name === "expires_at")) {
   db.exec("ALTER TABLE news ADD COLUMN expires_at TEXT");
 }
 
+// 旧スキーマ(hidden列なし)で作成済みのDBに対する軽量マイグレーション
+const categoriesColumns = db.prepare("PRAGMA table_info(categories)").all<{ name: string }>();
+if (!categoriesColumns.some((c) => c.name === "hidden")) {
+  db.exec("ALTER TABLE categories ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
+}
+
 const MAX_HISTORY_ENTRIES = 50;
 
 interface SettingsRow {
@@ -100,6 +116,7 @@ interface SettingsRow {
 interface CategoryRow {
   id: number;
   name: string;
+  hidden: number;
 }
 
 // PUT /api/config が If-Match ヘッダーで指定したバージョンと現在のDBの内容が
@@ -141,6 +158,29 @@ function getAddedAtMap(): Record<string, string> {
   return result;
 }
 
+// URLごとの定期自動チェックの最新結果(到達可否のみ)。キーはlinksテーブルと同じURL文字列。
+function getLinkCheckStatusMap(): Record<string, boolean> {
+  const rows = db.prepare("SELECT url, ok FROM link_check_status").all<{ url: string; ok: number }>();
+  const result: Record<string, boolean> = {};
+  rows.forEach((row) => {
+    result[row.url] = !!row.ok;
+  });
+  return result;
+}
+
+// 定期自動チェック(SPEC.md §5.1.2)の結果をまとめて記録する。src/server.ts の
+// スケジューラーから呼び出される。手動チェック(POST /api/check-links)の結果は含めない。
+export function recordLinkCheckResults(results: { url: string; ok: boolean }[]): void {
+  const now = new Date().toISOString();
+  const stmt = db.prepare(
+    "INSERT INTO link_check_status (url, ok, checked_at) VALUES (?, ?, ?) " +
+      "ON CONFLICT(url) DO UPDATE SET ok = excluded.ok, checked_at = excluded.checked_at",
+  );
+  db.transaction(() => {
+    results.forEach((r) => stmt.run(r.url, r.ok ? 1 : 0, now));
+  })();
+}
+
 interface NewsRow {
   date: string;
   text: string;
@@ -169,9 +209,10 @@ export function getConfig(): PortalConfig | null {
 
   const clickCounts = getClickCounts();
   const addedAtMap = getAddedAtMap();
+  const checkStatusMap = getLinkCheckStatusMap();
 
   const categories: Category[] = db
-    .prepare("SELECT id, name FROM categories ORDER BY sort_order ASC, id ASC")
+    .prepare("SELECT id, name, hidden FROM categories ORDER BY sort_order ASC, id ASC")
     .all<CategoryRow>()
     .map((cat) => {
       const links: LinkItem[] = db
@@ -182,13 +223,15 @@ export function getConfig(): PortalConfig | null {
         .map((link) => {
           const clicks = clickCounts[link.url];
           const addedAt = addedAtMap[link.url];
+          const broken = checkStatusMap[link.url] === false;
           return {
             ...link,
             ...(clicks ? { clicks } : {}),
             ...(addedAt ? { addedAt } : {}),
+            ...(broken ? { broken: true } : {}),
           };
         });
-      return { name: cat.name, links };
+      return { name: cat.name, links, ...(cat.hidden ? { hidden: true } : {}) };
     });
 
   return { title: settings.title, themeColor: settings.themeColor, news, categories };
@@ -224,7 +267,9 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
 
   db.exec("DELETE FROM links");
   db.exec("DELETE FROM categories");
-  const insertCategory = db.prepare("INSERT INTO categories (name, sort_order) VALUES (?, ?)");
+  const insertCategory = db.prepare(
+    "INSERT INTO categories (name, sort_order, hidden) VALUES (?, ?, ?)",
+  );
   const insertLink = db.prepare(
     "INSERT INTO links (category_id, name, url, icon, sort_order) VALUES (?, ?, ?, ?, ?)",
   );
@@ -233,7 +278,7 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
   );
   const now = new Date().toISOString();
   config.categories.forEach((cat, cIdx) => {
-    insertCategory.run(cat.name, cIdx);
+    insertCategory.run(cat.name, cIdx, cat.hidden ? 1 : 0);
     const categoryId = db.lastInsertRowId;
     cat.links.forEach((link, lIdx) => {
       insertLink.run(categoryId, link.name, link.url, link.icon, lIdx);
@@ -292,6 +337,13 @@ function ensureSeeded(): void {
 }
 
 ensureSeeded();
+
+// 現在の data/portal.db をそのまま読み込む(手動ダウンロード用。SPEC.md §4.9)。定期バックアップ
+// (backupDatabase())と同じく、書き込み中に読む可能性を完全には排除できないベストエフォートな
+// 取得である点は同じ(§2.3参照)。
+export async function readDbFileBytes(): Promise<Uint8Array> {
+  return await Deno.readFile(DB_PATH);
+}
 
 const MAX_BACKUPS_TO_KEEP = 24;
 
