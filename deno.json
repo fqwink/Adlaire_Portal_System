@@ -1,0 +1,18 @@
+{
+  "tasks": {
+    "build:server": "deno bundle --platform deno -o dist/server.js src/server.ts",
+    "build:client:portal": "deno bundle --platform browser --format iife -o public/js/portal.js src/client/portal.ts",
+    "build:client:edit": "deno bundle --platform browser --format iife -o public/js/edit.js src/client/edit.ts",
+    "build": "deno task build:server && deno task build:client:portal && deno task build:client:edit",
+    "start": "deno run --allow-net --allow-read --allow-write --allow-ffi --allow-env dist/server.js",
+    "serve": "deno task build && deno task start",
+    "dev": "deno run --allow-net --allow-read --allow-write --allow-ffi --allow-env --watch src/server.ts",
+    "check": "deno check src/server.ts src/client/portal.ts src/client/edit.ts"
+  },
+  "compilerOptions": {
+    "strict": true
+  },
+  "fmt": {
+    "include": ["src/"]
+  }
+}

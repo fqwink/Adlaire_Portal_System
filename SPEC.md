@@ -6,24 +6,29 @@
 仕様を変更する場合は、実装の変更とあわせて必ず本ファイルを更新すること。
 
 - **システム名**: Adlaire Portal System
-- **バージョン**: 2.0
+- **バージョン**: 3.0
 - **最終更新**: 2026-09-03
 
 ---
 
 ## 1. システム概要
 
-Node.js（Express）+ SQLiteデータベースで動作する社内ポータルシステム。
+Deno + TypeScript + SQLiteデータベースで動作する社内ポータルシステム。
 社内でよく使うリンクをカテゴリ別に整理して一覧表示する「閲覧画面」と、その内容を編集する「編集画面」の2画面で構成される。
 設定データ（タイトル・テーマカラー・お知らせ・カテゴリ・リンク）は SQLite データベースに保存され、
 サーバーを起動しておけば複数のブラウザ・端末から同一のデータを参照できる。
 
+**すべてのソースコードはTypeScript(`src/`配下)が正本であり、実行時に使用するJavaScript(`dist/`・`public/js/`配下)は
+ビルド（`deno task build`）によってTypeScriptから生成される。生成されたJavaScriptを直接編集してはならない。**
+
 ### 1.1 対象範囲
-- 閲覧画面（`public/portal.html`）
-- 編集画面（`public/edit.html`）
-- バックエンドサーバー（`server.js`）
-- データアクセス層（`db.js`）
-- 初期シードデータ（`seed-data.js`）
+- 閲覧画面（`public/portal.html` + `src/client/portal.ts`）
+- 編集画面（`public/edit.html` + `src/client/edit.ts`）
+- バックエンドサーバー（`src/server.ts`）
+- データアクセス層（`src/db.ts`）
+- バリデーション（`src/validate.ts`）
+- 共有型定義（`src/types.ts`）
+- 初期シードデータ（`src/seed-data.ts`）
 
 ### 1.2 非対象範囲（現時点で実装しない）
 - ユーザー認証・アクセス制御
@@ -36,35 +41,60 @@ Node.js（Express）+ SQLiteデータベースで動作する社内ポータル�
 
 ```
 adlaire_portal/
-├── server.js         # Expressサーバー本体 (静的配信 + REST API)
-├── db.js             # SQLiteデータアクセス層 (node:sqlite) + バリデーション
-├── seed-data.js       # 初回起動時の初期データ (シード)
-├── package.json
+├── deno.json               # Denoタスク定義・コンパイラオプション
+├── deno.lock                # 依存関係ロックファイル
+├── src/                      # TypeScript正本 (すべての実装はここを変更する)
+│   ├── types.ts              # 共有型定義 (PortalConfig等)
+│   ├── validate.ts            # 設定データのバリデーション (サーバー側)
+│   ├── seed-data.ts           # 初回起動時の初期データ (シード)
+│   ├── db.ts                  # SQLiteデータアクセス層 (jsr:@db/sqlite)
+│   ├── server.ts               # Denoサーバー本体 (静的配信 + REST API)
+│   └── client/
+│       ├── portal.ts           # 閲覧画面のクライアントロジック
+│       └── edit.ts              # 編集画面のクライアントロジック
 ├── public/
-│   ├── portal.html   # 閲覧画面
-│   └── edit.html     # 編集画面
+│   ├── portal.html            # 閲覧画面 (HTML/CSSのみ。ロジックはjs/portal.jsを読み込む)
+│   ├── edit.html               # 編集画面 (同上、js/edit.jsを読み込む)
+│   └── js/                      # ビルド生成物 (自動生成・gitignore対象・直接編集禁止)
+│       ├── portal.js
+│       └── edit.js
+├── dist/
+│   └── server.js               # ビルド生成物 (src/server.tsのバンドル。自動生成・gitignore対象)
 ├── data/
-│   └── portal.db     # SQLiteデータベースファイル (自動生成・gitignore対象)
-├── README.md          # セットアップ・運用ガイド
-└── SPEC.md            # 本ファイル (マスター仕様書)
+│   └── portal.db               # SQLiteデータベースファイル (自動生成・gitignore対象)
+├── README.md                   # セットアップ・運用ガイド
+└── SPEC.md                     # 本ファイル (マスター仕様書)
 ```
 
 ### 2.1 技術スタック
 | 項目 | 内容 |
 |---|---|
-| 実行環境 | Node.js v22.5以上 |
-| Webフレームワーク | Express ^4.19 |
-| データベース | SQLite (Node.js組み込み `node:sqlite`、実験的機能) |
-| フロントエンド | 素のHTML/CSS/JavaScript（フレームワーク不使用） |
+| 言語（正本） | TypeScript（`src/`配下すべて。strict モード） |
+| 実行時生成物 | JavaScript（`deno bundle`によりTypeScriptから生成。`dist/`・`public/js/`配下） |
+| 実行環境 | Deno v2.9以上 |
+| HTTPサーバー | Deno標準API（`Deno.serve`）+ `jsr:@std/http`（静的ファイル配信） |
+| データベース | SQLite（`jsr:@db/sqlite`。FFI経由でネイティブsqlite3を利用） |
+| フロントエンド | TypeScriptをビルドしたプレーンJavaScript（フレームワーク不使用） |
 | 通信 | フロントエンド ⇔ バックエンド間はJSON REST API (`fetch`) |
 
-### 2.2 起動方法
+### 2.2 ビルド・起動方法
 ```bash
-npm install
-npm start            # 既定ポート: 3000
-PORT=8080 npm start  # ポートを変更する場合
+deno task build   # src/*.ts から dist/server.js, public/js/*.js を生成
+deno task start   # dist/server.js を実行 (既定ポート: 3000)
+deno task serve   # build + start をまとめて実行
+
+PORT=8080 deno task start   # ポートを変更する場合
+
+deno task dev      # ビルドせず src/server.ts を直接実行 + ファイル変更監視 (開発用)
+deno task check    # 型チェックのみ実行 (ビルドしない)
 ```
-初回起動時、`data/portal.db` が存在しなければ自動生成し、`seed-data.js` の内容で初期化する（`db.js` の `ensureSeeded()`）。
+初回起動時、`data/portal.db` が存在しなければ自動生成し、`src/seed-data.ts` の内容で初期化する（`src/db.ts` の `ensureSeeded()`）。
+
+> ℹ️ `src/client/portal.ts` / `src/client/edit.ts` はブラウザで実行されるコードのため、
+> `deno bundle --platform browser --format iife` でプレーンJavaScript（IIFE形式）にコンパイルし、
+> `public/js/portal.js` / `public/js/edit.js` として出力する。
+> `src/server.ts` / `src/db.ts` はDenoランタイム上で実行されるコードのため、
+> `deno bundle --platform deno` で `dist/server.js` に単一ファイルとしてバンドルする。
 
 ---
 
@@ -148,13 +178,13 @@ API（`/api/config`）は上記テーブルを以下のJSON構造に組み立て
 - **失敗時**: バリデーションエラー時は `400 Bad Request`、`{ "error": "<エラーメッセージ>" }`
 
 ### 4.3 `POST /api/config/reset`
-データベースの内容を `seed-data.js` の初期データにリセットする（`PUT`と同じ置き換え処理をシードデータに対して実行）。
+データベースの内容を `src/seed-data.ts` の初期データにリセットする（`PUT`と同じ置き換え処理をシードデータに対して実行）。
 
 - **リクエストボディ**: なし
 - **成功時**: `200 OK`、リセット後の設定をJSONで返す
 - **失敗時**: `500 Internal Server Error`、`{ "error": "<エラーメッセージ>" }`
 
-### 4.4 サーバー側バリデーション仕様（`db.js` `validateConfig()`）
+### 4.4 サーバー側バリデーション仕様（`src/validate.ts` `validateConfig()`）
 `PUT /api/config` および `reset` 実行時、以下を満たさない場合はエラーとして拒否する。
 
 | 項目 | 検証内容 |
@@ -247,8 +277,8 @@ API（`/api/config`）は上記テーブルを以下のJSON構造に組み立て
 - `escapeHtml()`は両画面それぞれの`<script>`内に同一実装を保持する（共有モジュール化はしていない）
 
 ### 6.2 URL検証
-- **フロントエンド**（`portal.html` `sanitizeUrl()`）: `http://`または`https://`で始まるURL、あるいは`/`または`.`で始まる相対パスのみそのまま許可。それ以外（`javascript:`スキーム等）は`#`に置き換える
-- **バックエンド**（`db.js` `isValidUrl()`）: 同等の基準（`^https?:\/\//i` または `^[./]`）で検証し、満たさない場合は`PUT /api/config`を`400`で拒否する
+- **フロントエンド**（`src/client/portal.ts` `sanitizeUrl()`）: `http://`または`https://`で始まるURL、あるいは`/`または`.`で始まる相対パスのみそのまま許可。それ以外（`javascript:`スキーム等）は`#`に置き換える
+- **バックエンド**（`src/validate.ts` `isValidUrl()`）: 同等の基準（`^https?:\/\//i` または `^[./]`）で検証し、満たさない場合は`PUT /api/config`を`400`で拒否する
 
 ### 6.3 認証・アクセス制御
 - 本システムには**認証機能は実装されていない**
@@ -257,7 +287,7 @@ API（`/api/config`）は上記テーブルを以下のJSON構造に組み立て
 - インターネットに公開する場合は、リバースプロキシでのBASIC認証やVPN経由でのアクセス制限など、システム外側での保護を別途講じること（本システム自体には実装しない）
 
 ### 6.4 入力サイズ制限
-- APIリクエストボディは `express.json({ limit: "1mb" })` により最大1MBに制限される
+- APIリクエストボディは `Content-Length` ヘッダーをもとに最大1MBに制限される（`src/server.ts` `readJsonBody()`）
 
 ---
 
@@ -265,10 +295,13 @@ API（`/api/config`）は上記テーブルを以下のJSON構造に組み立て
 
 | 項目 | 仕様 |
 |---|---|
-| 対応Node.jsバージョン | v22.5以上（`node:sqlite`使用のため） |
+| 対応Denoバージョン | v2.9以上 |
+| ソースの正本 | TypeScript（`src/`配下）。JavaScript（`dist/`・`public/js/`配下）は `deno task build` によるビルド生成物であり、直接編集しない |
+| 型チェック | `deno task check`（`deno check`）で`strict`モードの型チェックを実施する |
 | ポート | 環境変数`PORT`で指定可能。既定値は`3000` |
 | データ永続化 | SQLiteファイル（`data/portal.db`）。プロセス再起動後もデータは保持される |
-| 同時実行 | `node:sqlite`の`DatabaseSync`は同期API。単一プロセス内での逐次アクセスを前提とし、大規模な同時書き込み負荷は想定していない |
+| SQLiteドライバ | `jsr:@db/sqlite`（FFI経由でネイティブsqlite3を利用。`--allow-ffi`が必要） |
+| 同時実行 | `Database`は同期API。単一プロセス内での逐次アクセスを前提とし、大規模な同時書き込み負荷は想定していない |
 | ロギング | サーバー起動時に起動メッセージを標準出力に出力する程度。アクセスログ・エラーログの永続化は未実装 |
 | ブラウザ対応 | モダンブラウザ（`fetch`、CSS変数、`prefers-color-scheme`に対応したもの） |
 
@@ -279,9 +312,10 @@ API（`/api/config`）は上記テーブルを以下のJSON構造に組み立て
 | 用語 | 説明 |
 |---|---|
 | 設定（config） | タイトル・テーマカラー・お知らせ・カテゴリ・リンクをまとめた1つのJSONオブジェクト。システム全体で単一のみ存在する |
-| シードデータ | 初回起動時にDBが空の場合に投入される初期設定（`seed-data.js`） |
+| シードデータ | 初回起動時にDBが空の場合に投入される初期設定（`src/seed-data.ts`） |
 | カテゴリ | リンクをグループ化する単位。名称と表示順、複数のリンクを持つ |
 | リンク | カテゴリに属する個別の外部/内部URL。名称・URL・アイコンを持つ |
+| 正本（ソースオブトゥルース） | 人間が直接編集する原本のファイル。本システムでは仕様の正本は本ファイル（SPEC.md）、実装の正本は`src/`配下のTypeScriptファイルを指す |
 
 ---
 
@@ -289,6 +323,7 @@ API（`/api/config`）は上記テーブルを以下のJSON構造に組み立て
 
 | バージョン | 日付 | 内容 |
 |---|---|---|
+| 3.0 | 2026-09-03 | ランタイムをNode.js(Express)からDenoに移行し、実装言語をTypeScriptに統一。`src/`配下のTypeScriptを正本とし、`deno bundle`でJavaScript(`dist/`・`public/js/`)を生成するビルド方式を導入。SQLiteドライバを`node:sqlite`から`jsr:@db/sqlite`に変更 |
 | 2.0 | 2026-09-03 | SQLiteデータベース + Expressバックエンドを導入。マスター仕様書（本ファイル）を新設し、仕様をREADMEから分離・集約 |
 | 1.1 | 2026-02-27 | LocalStorage自動保存、JSONインポート/エクスポート、デフォルトに戻す機能を追加（静的サイト構成時代の仕様。現行仕様には非適用） |
 | 1.0 | 2026-02-14 | 初回リリース（静的サイト構成。`data.js`手動編集方式） |
