@@ -18,6 +18,16 @@ function updateStorageStatus(message: string): void {
 
 let config: PortalConfig = { title: "Adlaireポータル", themeColor: "#00a968", news: [], categories: [] };
 
+// サーバーから最後に取得した設定のバージョン(楽観的排他制御用)。
+// 保存時にIf-Matchヘッダーとして送信し、他の人が先に保存していた場合はサーバーが409を返す。
+let currentVersion: number | null = null;
+
+function parseVersion(etag: string | null): number | null {
+  if (!etag) return null;
+  const n = Number(etag.replace(/"/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
 function normalizeConfig(c: PortalConfig): PortalConfig {
   if (c.news && !Array.isArray(c.news)) {
     c.news = [{ date: "News", text: String(c.news) }];
@@ -30,6 +40,7 @@ function normalizeConfig(c: PortalConfig): PortalConfig {
 async function loadFromServer(): Promise<PortalConfig> {
   const res = await fetch("/api/config");
   if (!res.ok) throw new Error("設定データの取得に失敗しました");
+  currentVersion = parseVersion(res.headers.get("etag"));
   return res.json();
 }
 
@@ -38,6 +49,16 @@ const ICONS = [
   "💬", "💻", "🔒", "⚠️", "💡", "☕", "🍱", "🏥", "🎉", "🚃",
   "✈️", "🎯", "💼", "📈", "🔧", "⚙️", "🌐", "📱", "🖥️", "🎨",
 ];
+
+interface LinkCheckResult {
+  ok: boolean;
+  status: number | null;
+  error: string | null;
+}
+
+// キーは "カテゴリindex-リンクindex"。「🔗 リンクをチェック」実行時にのみ更新される
+// (ページを離れる・再読み込みすると消える、その場限りの確認結果)。
+let linkCheckResults: Record<string, LinkCheckResult> | null = null;
 
 const resizer = document.getElementById("dragHandle")!;
 const editorPanel = document.getElementById("editorPanel")! as HTMLElement;
@@ -154,7 +175,13 @@ function renderForm(): void {
   config.categories.forEach((cat: Category, cIdx: number) => {
     let html = `<div class="box" style="border-left:4px solid ${config.themeColor}"><div class="box-header"><input type="text" value="${escapeHtml(cat.name)}" oninput="updateCat(${cIdx}, this.value)" style="font-weight:bold; width:50%;"><div style="display:flex;"><button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, 1)">⬇️</button><button class="btn btn-icon btn-red" style="margin-left:5px;" onclick="delCat(${cIdx})">🗑️</button></div></div>`;
     cat.links.forEach((link: LinkItem, lIdx: number) => {
-      html += `<div class="row"><div style="position:relative;"><input type="text" value="${escapeHtml(link.icon)}" style="width:35px; text-align:center; cursor:pointer;" readonly onclick="togglePalette('pal-${cIdx}-${lIdx}')"><div id="pal-${cIdx}-${lIdx}" class="palette">${ICONS.map((ic) => `<div class="p-icon" onclick="setIcon(${cIdx},${lIdx},'${ic}')">${ic}</div>`).join("")}</div></div><div style="flex:1;"><input type="text" value="${escapeHtml(link.name)}" placeholder="名称" oninput="updateLink(${cIdx},${lIdx},'name',this.value)" style="margin-bottom:3px;"><input type="text" value="${escapeHtml(link.url)}" placeholder="URL" style="font-size:12px; color:#666;" oninput="updateLink(${cIdx},${lIdx},'url',this.value)"></div><div style="display:flex; flex-direction:column; gap:2px;"><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, 1)">⬇️</button></div><button class="btn btn-icon btn-red" style="height:auto;" onclick="delLink(${cIdx},${lIdx})">×</button></div>`;
+      const check = linkCheckResults?.[`${cIdx}-${lIdx}`];
+      const checkBadge = !check
+        ? ""
+        : check.ok
+        ? `<span title="OK${check.status ? ` (HTTP ${check.status})` : ""}" style="font-size:16px;">✅</span>`
+        : `<span title="${escapeHtml(check.error || (check.status ? `HTTP ${check.status}` : "確認できませんでした"))}" style="font-size:16px; cursor:help;">❌</span>`;
+      html += `<div class="row"><div style="position:relative;"><input type="text" value="${escapeHtml(link.icon)}" style="width:35px; text-align:center; cursor:pointer;" readonly onclick="togglePalette('pal-${cIdx}-${lIdx}')"><div id="pal-${cIdx}-${lIdx}" class="palette">${ICONS.map((ic) => `<div class="p-icon" onclick="setIcon(${cIdx},${lIdx},'${ic}')">${ic}</div>`).join("")}</div></div><div style="flex:1;"><input type="text" value="${escapeHtml(link.name)}" placeholder="名称" oninput="updateLink(${cIdx},${lIdx},'name',this.value)" style="margin-bottom:3px;"><input type="text" value="${escapeHtml(link.url)}" placeholder="URL" style="font-size:12px; color:#666;" oninput="updateLink(${cIdx},${lIdx},'url',this.value)"></div><div style="width:20px; text-align:center;">${checkBadge}</div><div style="display:flex; flex-direction:column; gap:2px;"><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, 1)">⬇️</button></div><button class="btn btn-icon btn-red" style="height:auto;" onclick="delLink(${cIdx},${lIdx})">×</button></div>`;
     });
     html += `<button class="btn btn-blue" onclick="addLink(${cIdx})" style="background:${config.themeColor}22; color:${config.themeColor}; border-color:${config.themeColor};">＋ リンクを追加</button></div>`;
     formArea.innerHTML += html;
@@ -189,6 +216,7 @@ function updateCat(i: number, v: string): void {
 function moveCat(i: number, dir: number): void {
   if (i + dir < 0 || i + dir >= config.categories.length) return;
   [config.categories[i], config.categories[i + dir]] = [config.categories[i + dir], config.categories[i]];
+  linkCheckResults = null;
   renderForm();
   updatePreview();
 }
@@ -196,6 +224,7 @@ function moveLink(c: number, l: number, dir: number): void {
   const links = config.categories[c].links;
   if (l + dir < 0 || l + dir >= links.length) return;
   [links[l], links[l + dir]] = [links[l + dir], links[l]];
+  linkCheckResults = null;
   renderForm();
   updatePreview();
 }
@@ -213,6 +242,7 @@ function setIcon(c: number, l: number, ic: string): void {
 function delCat(i: number): void {
   if (confirm("このカテゴリを削除しますか?")) {
     config.categories.splice(i, 1);
+    linkCheckResults = null;
     renderForm();
     updatePreview();
   }
@@ -228,6 +258,7 @@ function updateLink(c: number, l: number, k: "name" | "url" | "icon", v: string)
 }
 function delLink(c: number, l: number): void {
   config.categories[c].links.splice(l, 1);
+  linkCheckResults = null;
   renderForm();
   updatePreview();
 }
@@ -237,18 +268,92 @@ function addLink(c: number): void {
   updatePreview();
 }
 
-// データベース(SQLite)に保存
+// 画面に表示中の全リンクへサーバー経由でHEADリクエストを送り、到達可否を確認する。
+// 結果はDBには保存されず、この編集セッション中のみ表示される(SPEC.md §5.2.2)。
+async function checkLinks(): Promise<void> {
+  const keys: string[] = [];
+  const urls: string[] = [];
+  config.categories.forEach((cat, cIdx) => {
+    cat.links.forEach((link, lIdx) => {
+      keys.push(`${cIdx}-${lIdx}`);
+      urls.push(link.url);
+    });
+  });
+  if (urls.length === 0) {
+    alert("チェック対象のリンクがありません。");
+    return;
+  }
+
+  const btn = document.getElementById("check-links-btn") as HTMLButtonElement | null;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "🔗 チェック中...";
+  }
+  try {
+    const res = await fetch("/api/check-links", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "リンクチェックに失敗しました");
+
+    const results: { ok: boolean; status: number | null; error: string | null }[] = data.results;
+    linkCheckResults = {};
+    results.forEach((r, i) => {
+      linkCheckResults![keys[i]] = r;
+    });
+    const brokenCount = results.filter((r) => !r.ok).length;
+    renderForm();
+    updateStorageStatus(
+      brokenCount > 0
+        ? `🔗 リンクチェック完了 (${brokenCount}件に問題があります)`
+        : "🔗 リンクチェック完了 (すべて正常です)",
+    );
+  } catch (error) {
+    alert("❌ リンクチェックに失敗しました。\n\n" + (error as Error).message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "🔗 リンクをチェック";
+    }
+  }
+}
+
+// データベース(SQLite)に保存。他の人が先に保存していた場合(バージョン不一致)は
+// 409が返り、サーバー側の最新内容を再取得する(楽観的排他制御。SPEC.md §4.2)。
 async function saveToServer(): Promise<void> {
   const saveBtn = document.getElementById("save-btn")! as HTMLButtonElement;
   saveBtn.disabled = true;
   try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (currentVersion !== null) {
+      headers["If-Match"] = `"${currentVersion}"`;
+    }
     const res = await fetch("/api/config", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(config),
     });
+
+    if (res.status === 409) {
+      const conflictData = await res.json();
+      alert(
+        "⚠️ 保存できませんでした。\n\n" + (conflictData.error || "他の変更と競合しました。") +
+          "\n\n「OK」を押すと最新の内容を再取得します。この画面での編集内容は失われます。",
+      );
+      const loaded = await loadFromServer();
+      config = normalizeConfig(loaded);
+      linkCheckResults = null;
+      renderForm();
+      updatePreview();
+      updateStorageStatus("🔄 競合を検出したため最新の内容を再取得しました");
+      return;
+    }
+
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "保存に失敗しました");
+    currentVersion = parseVersion(res.headers.get("etag"));
     config = normalizeConfig(data);
     renderForm();
     updatePreview();
@@ -316,6 +421,7 @@ function handleImportFile(event: Event): void {
         if (!Array.isArray(cat.links)) cat.links = [];
       });
 
+      linkCheckResults = null;
       renderForm();
       updatePreview();
       updateStorageStatus("📥 インポート完了 (未保存)");
@@ -340,7 +446,9 @@ async function resetToDefault(): Promise<void> {
     const res = await fetch("/api/config/reset", { method: "POST" });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "リセットに失敗しました");
+    currentVersion = parseVersion(res.headers.get("etag"));
     config = normalizeConfig(data);
+    linkCheckResults = null;
     renderForm();
     updatePreview();
     updateStorageStatus("🔄 デフォルトに戻しました");
@@ -377,6 +485,7 @@ Object.assign(globalThis, {
   updateLink,
   delLink,
   addLink,
+  checkLinks,
   saveToServer,
   exportJSON,
   importJSON,
