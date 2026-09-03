@@ -25,6 +25,18 @@ function escapeHtml(text: unknown): string {
   return String(text).replace(/[&<>"']/g, (m) => map[m]);
 }
 
+// 検索語にマッチした部分だけを<mark>で囲む。マッチ前後・マッチ部分をそれぞれ
+// 個別にエスケープしてから連結するため、HTMLとして安全に挿入できる。
+function highlightMatch(text: string, term: string): string {
+  if (!term) return escapeHtml(text);
+  const idx = text.toLowerCase().indexOf(term.toLowerCase());
+  if (idx === -1) return escapeHtml(text);
+  const before = text.slice(0, idx);
+  const match = text.slice(idx, idx + term.length);
+  const after = text.slice(idx + term.length);
+  return `${escapeHtml(before)}<mark>${escapeHtml(match)}</mark>${escapeHtml(after)}`;
+}
+
 // URL検証
 function sanitizeUrl(url: unknown): string {
   if (!url) return "#";
@@ -32,6 +44,18 @@ function sanitizeUrl(url: unknown): string {
   if (/^https?:\/\//i.test(urlStr)) return urlStr;
   if (/^\//.test(urlStr) || /^\./.test(urlStr)) return urlStr;
   return "#";
+}
+
+// リンククリックを匿名でサーバーに記録する(個人・端末の識別は行わない。SPEC.md §1.3, §4.6)。
+// target="_blank"のためページ遷移を伴わず、結果を待つ必要もないためfire-and-forgetで送る。
+function reportClick(url: string): void {
+  fetch("/api/click", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  }).catch(() => {
+    // 集計目的の付随情報のため、送信に失敗してもユーザー体験に影響させない
+  });
 }
 
 function renderPortal(config: PortalConfig): void {
@@ -87,7 +111,8 @@ function renderPortal(config: PortalConfig): void {
     const section = document.createElement("div");
     section.className = "category-section search-target";
     section.id = `cat-${idx}`;
-    section.innerHTML = `<div class="category-header"><h2 class="category-title">${escapeHtml(cat.name)}</h2></div>`;
+    section.innerHTML =
+      `<div class="category-header" data-role="collapse-toggle"><h2 class="category-title">${escapeHtml(cat.name)}</h2><span class="collapse-arrow">▾</span></div>`;
 
     const grid = document.createElement("div");
     grid.className = "grid";
@@ -98,18 +123,34 @@ function renderPortal(config: PortalConfig): void {
       a.target = "_blank";
       a.rel = "noopener noreferrer";
       a.dataset.search = (link.name + cat.name).toLowerCase();
-      a.innerHTML = `<span class="card-icon">${escapeHtml(link.icon)}</span><span class="card-name">${escapeHtml(link.name)}</span>`;
+      a.dataset.name = link.name;
+      const clicksHtml = link.clicks
+        ? `<span class="card-clicks" title="累計クリック数">👁 ${link.clicks}</span>`
+        : "";
+      a.innerHTML =
+        `<span class="card-icon">${escapeHtml(link.icon)}</span><span class="card-name">${escapeHtml(link.name)}</span>${clicksHtml}`;
+      a.addEventListener("click", () => reportClick(link.url));
       grid.appendChild(a);
     });
     section.appendChild(grid);
     contentArea.appendChild(section);
   });
 
+  // カテゴリの折りたたみ(このブラウザタブ内だけの表示状態。保存・永続化は行わない。SPEC.md §1.3)
+  document.querySelectorAll<HTMLElement>('[data-role="collapse-toggle"]').forEach((header) => {
+    header.addEventListener("click", () => {
+      header.closest(".category-section")?.classList.toggle("collapsed");
+    });
+  });
+
   document.querySelectorAll<HTMLAnchorElement>('a[href^="#"]').forEach((anchor) => {
     anchor.addEventListener("click", function (e) {
       e.preventDefault();
       const target = document.querySelector(this.getAttribute("href")!);
-      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (target) {
+        target.classList.remove("collapsed");
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
     });
   });
 }
@@ -118,23 +159,32 @@ document.getElementById("search-input")!.addEventListener("keyup", (e) => {
   const term = (e.target as HTMLInputElement).value.toLowerCase();
 
   if (term === "") {
-    // 検索ボックスが空の場合はすべて表示
+    // 検索ボックスが空の場合はすべて表示し、ハイライトも解除する
     document.querySelectorAll<HTMLElement>(".search-item").forEach((item) => {
       item.style.display = "flex";
+      const nameEl = item.querySelector(".card-name");
+      if (nameEl) nameEl.innerHTML = escapeHtml(item.dataset.name ?? "");
     });
     document.querySelectorAll<HTMLElement>(".category-section").forEach((sec) => {
       sec.style.display = "block";
     });
   } else {
-    // 検索キーワードがある場合はフィルタリング
+    // 検索キーワードがある場合はフィルタリングし、マッチ部分をハイライトする。
+    // 折りたたみ中でも検索結果は必ず見えるよう、マッチしたカテゴリは展開する。
     document.querySelectorAll<HTMLElement>(".search-item").forEach((item) => {
-      item.style.display = item.dataset.search?.includes(term) ? "flex" : "none";
+      const matched = item.dataset.search?.includes(term) ?? false;
+      item.style.display = matched ? "flex" : "none";
+      const nameEl = item.querySelector(".card-name");
+      if (nameEl) {
+        nameEl.innerHTML = matched ? highlightMatch(item.dataset.name ?? "", term) : escapeHtml(item.dataset.name ?? "");
+      }
     });
     document.querySelectorAll<HTMLElement>(".category-section").forEach((sec) => {
       const visibleCount = Array.from(sec.querySelectorAll<HTMLElement>(".search-item")).filter(
         (el) => el.style.display !== "none",
       ).length;
       sec.style.display = visibleCount > 0 ? "block" : "none";
+      if (visibleCount > 0) sec.classList.remove("collapsed");
     });
   }
 });

@@ -1,16 +1,30 @@
 // Adlaire Portal System - Denoサーバー
-// 静的ファイル(public/配下)の配信、設定データのREST API、リンク到達確認API(check-links)を提供する。
+// 静的ファイル(public/配下)の配信、設定データのREST API、リンク到達確認API(check-links)、
+// クリック集計・変更履歴・ヘルスチェックAPIを提供する。
 
 import { serveDir } from "jsr:@std/http@^1.1.3/file-server";
 import { fromFileUrl } from "jsr:@std/path@^1.1.6";
-import { getConfig, getVersion, replaceConfig, resetToSeed, VersionConflictError } from "./db.ts";
+import {
+  backupDatabase,
+  getConfig,
+  getHistoryEntry,
+  getHistoryList,
+  getVersion,
+  recordClick,
+  replaceConfig,
+  resetToSeed,
+  VersionConflictError,
+} from "./db.ts";
 import { isValidUrl } from "./validate.ts";
 
 const PORT = Number(Deno.env.get("PORT") ?? "3000");
 const PUBLIC_DIR = fromFileUrl(new URL("../public/", import.meta.url));
+const ACCESS_LOG_PATH = new URL("../data/access.log", import.meta.url);
 const MAX_BODY_BYTES = 1024 * 1024; // 1MB
 const LINK_CHECK_TIMEOUT_MS = 5000;
 const MAX_LINKS_TO_CHECK = 200;
+const BACKUP_INTERVAL_MINUTES = Number(Deno.env.get("BACKUP_INTERVAL_MINUTES") ?? "60");
+const SERVER_START_TIME = Date.now();
 
 function jsonResponse(body: unknown, status = 200, version?: number | null): Response {
   const headers = new Headers({ "content-type": "application/json; charset=utf-8" });
@@ -18,6 +32,13 @@ function jsonResponse(body: unknown, status = 200, version?: number | null): Res
     headers.set("etag", `"${version}"`);
   }
   return new Response(JSON.stringify(body), { status, headers });
+}
+
+// アクセスログ/エラーログを標準出力と data/access.log の両方に出力する(SPEC.md §8)。
+// ログ書き込み自体の失敗はリクエスト処理を妨げないよう握りつぶす。
+function logLine(line: string): void {
+  console.log(line);
+  Deno.writeTextFile(ACCESS_LOG_PATH, line + "\n", { append: true, create: true }).catch(() => {});
 }
 
 async function readJsonBody(req: Request): Promise<unknown> {
@@ -67,6 +88,10 @@ async function checkOneLink(url: string): Promise<LinkCheckResult> {
 }
 
 async function handleApi(req: Request, url: URL): Promise<Response> {
+  if (url.pathname === "/healthz" && req.method === "GET") {
+    return jsonResponse({ status: "ok", uptimeSeconds: Math.round((Date.now() - SERVER_START_TIME) / 1000) });
+  }
+
   if (url.pathname === "/api/config" && req.method === "GET") {
     const config = getConfig();
     if (!config) {
@@ -116,15 +141,61 @@ async function handleApi(req: Request, url: URL): Promise<Response> {
     }
   }
 
+  if (url.pathname === "/api/click" && req.method === "POST") {
+    try {
+      const body = await readJsonBody(req) as { url?: unknown };
+      if (typeof body.url !== "string" || !isValidUrl(body.url)) {
+        throw new Error("urlが不正です");
+      }
+      recordClick(body.url);
+      return jsonResponse({ ok: true });
+    } catch (err) {
+      return jsonResponse({ error: (err as Error).message }, 400);
+    }
+  }
+
+  if (url.pathname === "/api/history" && req.method === "GET") {
+    return jsonResponse({ entries: getHistoryList() });
+  }
+
+  const historyEntryMatch = url.pathname.match(/^\/api\/history\/(\d+)$/);
+  if (historyEntryMatch && req.method === "GET") {
+    const entry = getHistoryEntry(Number(historyEntryMatch[1]));
+    if (!entry) {
+      return jsonResponse({ error: "指定された変更履歴が見つかりません" }, 404);
+    }
+    return jsonResponse(entry);
+  }
+
   return jsonResponse({ error: "Not Found" }, 404);
 }
 
 Deno.serve({ port: PORT }, async (req) => {
+  const start = performance.now();
   const url = new URL(req.url);
-  if (url.pathname.startsWith("/api/")) {
-    return await handleApi(req, url);
+  let res: Response;
+  try {
+    if (url.pathname.startsWith("/api/") || url.pathname === "/healthz") {
+      res = await handleApi(req, url);
+    } else {
+      res = await serveDir(req, { fsRoot: PUBLIC_DIR, quiet: true });
+    }
+  } catch (err) {
+    console.error(err);
+    logLine(`${new Date().toISOString()} ERROR ${req.method} ${url.pathname} - ${(err as Error).message}`);
+    res = jsonResponse({ error: "Internal Server Error" }, 500);
   }
-  return await serveDir(req, { fsRoot: PUBLIC_DIR, quiet: true });
+  const durationMs = Math.round(performance.now() - start);
+  logLine(`${new Date().toISOString()} ${req.method} ${url.pathname} ${res.status} ${durationMs}ms`);
+  return res;
 });
+
+// data/portal.db の定期バックアップ(SPEC.md §2.3)。BACKUP_INTERVAL_MINUTES=0 で無効化できる。
+if (BACKUP_INTERVAL_MINUTES > 0) {
+  backupDatabase().catch((err) => console.error("初回バックアップに失敗しました:", err));
+  setInterval(() => {
+    backupDatabase().catch((err) => console.error("定期バックアップに失敗しました:", err));
+  }, BACKUP_INTERVAL_MINUTES * 60 * 1000);
+}
 
 console.log(`Adlaire Portal System サーバーを起動しました: http://localhost:${PORT}`);

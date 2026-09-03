@@ -73,17 +73,28 @@
 
   /* カテゴリ & カード */
   .category-section { margin-bottom: 60px; scroll-margin-top: 20px; }
-  .category-header { display: flex; align-items: center; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid rgba(0,0,0,0.05); }
+  .category-header {
+    display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 10px;
+    border-bottom: 2px solid rgba(0,0,0,0.05); cursor: pointer; user-select: none;
+  }
   .category-title { font-size: 1.5rem; font-weight: bold; color: var(--primary); margin: 0; }
+  .collapse-arrow { font-size: 1.1rem; color: var(--primary); transition: transform 0.2s; }
+  .category-section.collapsed .collapse-arrow { transform: rotate(-90deg); }
+  .category-section.collapsed .grid { display: none; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 20px; }
   .card {
     background: var(--card-bg); color: var(--text); border-radius: var(--radius); padding: 25px 20px;
     display: flex; flex-direction: column; align-items: center; text-align: center; justify-content: center;
     box-shadow: var(--shadow); transition: all 0.25s; border: 1px solid transparent; height: 100%; box-sizing: border-box;
+    position: relative;
   }
   .card:hover { transform: translateY(-5px); border-color: var(--primary); box-shadow: 0 15px 30px rgba(0,0,0,0.1); }
   .card-icon { font-size: 42px; margin-bottom: 15px; line-height: 1; }
   .card-name { font-weight: bold; font-size: 15px; line-height: 1.4; }
+  .card-name mark { background: var(--primary-light); color: var(--primary-dark); border-radius: 3px; padding: 0 1px; }
+  .card-clicks {
+    position: absolute; top: 10px; right: 12px; font-size: 11px; opacity: 0.55; font-weight: normal;
+  }
 
   .footer { margin-top: 80px; font-size: 12px; color: #999; text-align: center; border-top: 1px solid rgba(0,0,0,0.05); padding-top: 30px; }
   .footer a { color: var(--primary); font-weight: bold; }
