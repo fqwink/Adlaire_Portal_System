@@ -88,12 +88,12 @@ A. `jsr:@db/sqlite`（Deno組み込みではなくFFIベースのSQLiteライブ
 このシステムは独自開発のため、自由にカスタマイズ・配布できます。
 
 ## ℹ️ バージョン情報
-- **Version**: 5.1
+- **Version**: 5.2
 - **Name**: Adlaire Portal System
 
 変更履歴は [`SPEC.md`](./SPEC.md) の「10. 変更履歴」に記載しています。
 
 ---
 
-**Adlaire Portal System** v5.1
+**Adlaire Portal System** v5.2
 © 2026 All Rights Reserved
