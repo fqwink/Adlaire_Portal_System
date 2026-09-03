@@ -68,6 +68,7 @@ let linkCheckResults: Record<string, LinkCheckResult> | null = null;
 // ドラッグ&ドロップでの並び替え中に、どの要素をつかんでいるかを保持する一時状態。
 let dragCatIdx: number | null = null;
 let dragLink: { cat: number; link: number } | null = null;
+let dragNewsIdx: number | null = null;
 
 // 元に戻す/やり直す(このブラウザタブ内だけの一時的な操作履歴。保存・永続化は行わない。SPEC.md §1.3)。
 const MAX_UNDO_STEPS = 50;
@@ -232,15 +233,18 @@ function renderForm(): void {
   const newsListHtml = config.news
     .map(
       (n, idx) => `
-      <div class="row">
-        <button class="btn btn-icon ${n.pinned ? "btn-pin active" : "btn-pin"}" onclick="toggleNewsPinned(${idx})" title="常に先頭に表示(ピン留め)">📌</button>
-        <input type="text" value="${escapeHtml(n.date)}" style="width:90px;" oninput="updateNews(${idx}, 'date', this.value)">
-        <input type="text" value="${escapeHtml(n.text)}" style="flex:1;" oninput="updateNews(${idx}, 'text', this.value)">
-        <button class="btn btn-icon btn-red" onclick="delNews(${idx})">🗑️</button>
-      </div>
-      <div class="row news-sub-row">
-        <label style="font-size:10px; color:#999; margin:0; text-transform:none; white-space:nowrap;">📅 有効期限(空欄=無期限):</label>
-        <input type="date" value="${escapeHtml(n.expiresAt || "")}" style="width:150px;" onchange="updateNewsExpiry(${idx}, this.value)">
+      <div class="news-entry" ondragover="onNewsDragOver(event)" ondrop="onNewsDrop(event, ${idx})">
+        <div class="row">
+          <span class="drag-handle" draggable="true" ondragstart="onNewsDragStart(event, ${idx})" title="ドラッグして並び替え">⠿</span>
+          <button class="btn btn-icon ${n.pinned ? "btn-pin active" : "btn-pin"}" onclick="toggleNewsPinned(${idx})" title="常に先頭に表示(ピン留め)">📌</button>
+          <input type="text" value="${escapeHtml(n.date)}" style="width:90px;" oninput="updateNews(${idx}, 'date', this.value)">
+          <input type="text" value="${escapeHtml(n.text)}" style="flex:1;" oninput="updateNews(${idx}, 'text', this.value)">
+          <button class="btn btn-icon btn-red" onclick="delNews(${idx})">🗑️</button>
+        </div>
+        <div class="row news-sub-row">
+          <label style="font-size:10px; color:#999; margin:0; text-transform:none; white-space:nowrap;">📅 有効期限(空欄=無期限):</label>
+          <input type="date" value="${escapeHtml(n.expiresAt || "")}" style="width:150px;" onchange="updateNewsExpiry(${idx}, this.value)">
+        </div>
       </div>`,
     )
     .join("");
@@ -320,6 +324,31 @@ function addNews(): void {
   renderForm();
   updatePreview();
 }
+// お知らせのドラッグ&ドロップ並び替え(SPEC.md §5.2.2)。ピン留めされたお知らせは閲覧画面では常に
+// 先頭にまとめて表示される(§3.2)ため、並び替えの効果はピン留め・非ピン留めそれぞれのグループ内での
+// 表示順にのみ反映される。
+function onNewsDragStart(e: DragEvent, idx: number): void {
+  dragNewsIdx = idx;
+  dragCatIdx = null;
+  dragLink = null;
+  e.dataTransfer?.setData("text/plain", String(idx));
+}
+function onNewsDragOver(e: DragEvent): void {
+  if (dragNewsIdx === null) return;
+  e.preventDefault();
+}
+function onNewsDrop(e: DragEvent, idx: number): void {
+  if (dragNewsIdx === null) return;
+  e.preventDefault();
+  if (dragNewsIdx !== idx) {
+    pushUndo();
+    const [moved] = config.news.splice(dragNewsIdx, 1);
+    config.news.splice(idx, 0, moved);
+    renderForm();
+    updatePreview();
+  }
+  dragNewsIdx = null;
+}
 function updateCat(i: number, v: string): void {
   markTextEdit();
   config.categories[i].name = v;
@@ -357,6 +386,7 @@ function moveLink(c: number, l: number, dir: number): void {
 function onCatDragStart(e: DragEvent, idx: number): void {
   dragCatIdx = idx;
   dragLink = null;
+  dragNewsIdx = null;
   e.dataTransfer?.setData("text/plain", String(idx));
 }
 function onCatDragOver(e: DragEvent): void {
@@ -392,6 +422,7 @@ function onCatDrop(e: DragEvent, idx: number): void {
 function onLinkDragStart(e: DragEvent, c: number, l: number): void {
   dragLink = { cat: c, link: l };
   dragCatIdx = null;
+  dragNewsIdx = null;
   e.dataTransfer?.setData("text/plain", `${c}-${l}`);
 }
 function onLinkDragOver(e: DragEvent): void {
@@ -831,6 +862,21 @@ function applyBulkImport(): void {
     return;
   }
 
+  // 既存のリンク(カテゴリを問わず全体)と同じURLが含まれていないか確認する。重複していても追加自体は
+  // 妨げない(意図的に同じURLを複数カテゴリに置きたい場合もあるため)が、誤操作防止のため警告する。
+  const existingUrls = new Set(config.categories.flatMap((cat) => cat.links.map((link) => link.url)));
+  const duplicates = parsed.filter((item) => existingUrls.has(item.url));
+  if (duplicates.length > 0) {
+    const list = duplicates.map((d) => `・${d.name} (${d.url})`).join("\n");
+    if (
+      !confirm(
+        `⚠️ 以下の${duplicates.length}件は既存のリンクと同じURLです。\n\n${list}\n\nそれでも追加しますか?`,
+      )
+    ) {
+      return;
+    }
+  }
+
   pushUndo();
   parsed.forEach((item) => {
     config.categories[catIdx].links.push({ name: item.name, url: item.url, icon: "📄" });
@@ -864,6 +910,9 @@ Object.assign(globalThis, {
   toggleCatHidden,
   moveCat,
   moveLink,
+  onNewsDragStart,
+  onNewsDragOver,
+  onNewsDrop,
   onCatDragStart,
   onCatDragOver,
   onCatDrop,

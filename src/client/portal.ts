@@ -96,7 +96,9 @@ function renderPortal(config: PortalConfig): void {
     newsArea.style.display = "block";
     newsItems.forEach((item) => {
       const li = document.createElement("li");
-      li.className = item.pinned ? "news-item news-pinned" : "news-item";
+      li.className = item.pinned ? "news-item news-pinned search-item" : "news-item search-item";
+      li.dataset.search = item.text.toLowerCase();
+      li.dataset.name = item.text;
       const pinBadge = item.pinned ? `<span class="news-pin" title="常に先頭に表示">📌</span>` : "";
       li.innerHTML =
         `${pinBadge}<span class="news-date">${escapeHtml(item.date)}</span><span class="news-text">${escapeHtml(item.text)}</span>`;
@@ -178,24 +180,28 @@ function renderPortal(config: PortalConfig): void {
 
 document.getElementById("search-input")!.addEventListener("keyup", (e) => {
   const term = (e.target as HTMLInputElement).value.toLowerCase();
+  const newsListEl = document.getElementById("news-list")!;
+  const newsAreaEl = document.getElementById("news-area")!;
 
   if (term === "") {
-    // 検索ボックスが空の場合はすべて表示し、ハイライトも解除する
+    // 検索ボックスが空の場合はすべて表示し、ハイライトも解除する(検索対象はリンクカード・お知らせの両方)
     document.querySelectorAll<HTMLElement>(".search-item").forEach((item) => {
       item.style.display = "flex";
-      const nameEl = item.querySelector(".card-name");
+      const nameEl = item.querySelector(".card-name, .news-text");
       if (nameEl) nameEl.innerHTML = escapeHtml(item.dataset.name ?? "");
     });
     document.querySelectorAll<HTMLElement>(".category-section").forEach((sec) => {
       sec.style.display = "block";
     });
+    // お知らせ欄は元々お知らせが1件もない場合は表示しない(renderPortal()と同じ判定)
+    newsAreaEl.style.display = newsListEl.children.length > 0 ? "block" : "none";
   } else {
-    // 検索キーワードがある場合はフィルタリングし、マッチ部分をハイライトする。
+    // 検索キーワードがある場合はフィルタリングし、マッチ部分をハイライトする(リンクカード・お知らせの両方が対象)。
     // 折りたたみ中でも検索結果は必ず見えるよう、マッチしたカテゴリは展開する。
     document.querySelectorAll<HTMLElement>(".search-item").forEach((item) => {
       const matched = item.dataset.search?.includes(term) ?? false;
       item.style.display = matched ? "flex" : "none";
-      const nameEl = item.querySelector(".card-name");
+      const nameEl = item.querySelector(".card-name, .news-text");
       if (nameEl) {
         nameEl.innerHTML = matched ? highlightMatch(item.dataset.name ?? "", term) : escapeHtml(item.dataset.name ?? "");
       }
@@ -207,7 +213,19 @@ document.getElementById("search-input")!.addEventListener("keyup", (e) => {
       sec.style.display = visibleCount > 0 ? "block" : "none";
       if (visibleCount > 0) sec.classList.remove("collapsed");
     });
+    const visibleNewsCount = Array.from(newsListEl.querySelectorAll<HTMLElement>(".search-item")).filter(
+      (el) => el.style.display !== "none",
+    ).length;
+    newsAreaEl.style.display = visibleNewsCount > 0 ? "block" : "none";
   }
+});
+
+// カテゴリの一括折りたたみ/展開(このブラウザタブ内だけの表示状態。保存・永続化は行わない。SPEC.md §1.3)
+document.getElementById("collapse-all-btn")!.addEventListener("click", () => {
+  document.querySelectorAll<HTMLElement>(".category-section").forEach((sec) => sec.classList.add("collapsed"));
+});
+document.getElementById("expand-all-btn")!.addEventListener("click", () => {
+  document.querySelectorAll<HTMLElement>(".category-section").forEach((sec) => sec.classList.remove("collapsed"));
 });
 
 // サーバーAPI(SQLiteデータベース)から設定を読み込んで表示

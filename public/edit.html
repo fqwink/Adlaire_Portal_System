@@ -56,7 +56,8 @@
 
   .btn-pin { opacity: 0.35; }
   .btn-pin.active { opacity: 1; background: #fff3cd; }
-  .news-sub-row { margin-top: -4px; margin-bottom: 12px; padding-left: 40px; gap: 6px; }
+  .news-sub-row { margin-top: -4px; margin-bottom: 12px; padding-left: 74px; gap: 6px; }
+  .news-entry { margin-bottom: 4px; }
 
   select, textarea {
     width: 100%; padding: 10px; border: 1px solid #ced4da; border-radius: 6px; box-sizing: border-box;
@@ -92,7 +93,7 @@
 
 <div class="editor-panel" id="editorPanel">
   <div class="editor-header">
-    <h2>🛠️ 設定エディタ <span class="badge">Adlaire v0.21</span></h2>
+    <h2>🛠️ 設定エディタ <span class="badge">Adlaire v0.22</span></h2>
     <div style="font-size: 11px; color: #95a5a6; margin-top: 5px;" id="storage-status">🗄️ データベースに接続中...</div>
   </div>
   <div class="editor-content" id="form-area">読み込み中...</div>
@@ -116,7 +117,7 @@
     </div>
     <button class="btn" onclick="resetToDefault()" style="background: #e74c3c22; color: #e74c3c; padding: 8px; border-radius: 8px; font-weight: bold; width: 100%; margin-top: 10px;">🔄 デフォルトに戻す</button>
     <input type="file" id="import-file" accept=".json" style="display: none;" onchange="handleImportFile(event)">
-    <div class="version-info">Adlaire Portal System v0.21 (Deno + TypeScript + SQLite)<br>© 2026 All Rights Reserved</div>
+    <div class="version-info">Adlaire Portal System v0.22 (Deno + TypeScript + SQLite)<br>© 2026 All Rights Reserved</div>
   </div>
 </div>
 <div class="resizer" id="dragHandle"></div>

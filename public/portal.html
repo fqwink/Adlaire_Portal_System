@@ -65,13 +65,19 @@
   .news-text { line-height: 1.5; }
 
   /* 検索ボックス */
-  .search-wrap { position: relative; margin-bottom: 50px; }
+  .search-wrap { position: relative; margin-bottom: 12px; }
   .search-box {
     width: 100%; padding: 18px 25px; font-size: 16px; border: 2px solid transparent; border-radius: 50px;
     outline: none; box-shadow: var(--shadow); box-sizing: border-box; background: var(--card-bg); color: var(--text);
     transition: all 0.3s;
   }
   .search-box:focus { border-color: var(--primary); box-shadow: 0 0 0 5px var(--primary-light); }
+  .collapse-controls { display: flex; justify-content: flex-end; gap: 10px; margin-bottom: 38px; }
+  .collapse-btn {
+    background: none; border: none; cursor: pointer; font-size: 11px; color: var(--text); opacity: 0.55;
+    padding: 4px 8px; border-radius: 6px; transition: 0.2s;
+  }
+  .collapse-btn:hover { opacity: 1; background: rgba(0,0,0,0.05); }
 
   /* カテゴリ & カード */
   .category-section { margin-bottom: 60px; scroll-margin-top: 20px; }
@@ -93,7 +99,7 @@
   .card:hover { transform: translateY(-5px); border-color: var(--primary); box-shadow: 0 15px 30px rgba(0,0,0,0.1); }
   .card-icon { font-size: 42px; margin-bottom: 15px; line-height: 1; }
   .card-name { font-weight: bold; font-size: 15px; line-height: 1.4; }
-  .card-name mark { background: var(--primary-light); color: var(--primary-dark); border-radius: 3px; padding: 0 1px; }
+  .card-name mark, .news-text mark { background: var(--primary-light); color: var(--primary-dark); border-radius: 3px; padding: 0 1px; }
   .card-clicks {
     position: absolute; top: 10px; right: 12px; font-size: 11px; opacity: 0.55; font-weight: normal;
   }
@@ -148,8 +154,12 @@
     </div>
 
     <div class="search-wrap"><input type="text" id="search-input" class="search-box" placeholder="🔍  メニューを検索..."></div>
+    <div class="collapse-controls">
+      <button type="button" class="collapse-btn" id="expand-all-btn">▾ すべて展開</button>
+      <button type="button" class="collapse-btn" id="collapse-all-btn">▸ すべて折りたたむ</button>
+    </div>
     <div id="content-area"></div>
-    <div class="footer">Powered by <strong>Adlaire Portal System</strong> v0.21</div>
+    <div class="footer">Powered by <strong>Adlaire Portal System</strong> v0.22</div>
   </main>
 </div>
 
