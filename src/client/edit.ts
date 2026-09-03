@@ -65,6 +65,10 @@ interface LinkCheckResult {
 // (ページを離れる・再読み込みすると消える、その場限りの確認結果)。
 let linkCheckResults: Record<string, LinkCheckResult> | null = null;
 
+// ドラッグ&ドロップでの並び替え中に、どの要素をつかんでいるかを保持する一時状態。
+let dragCatIdx: number | null = null;
+let dragLink: { cat: number; link: number } | null = null;
+
 const resizer = document.getElementById("dragHandle")!;
 const editorPanel = document.getElementById("editorPanel")! as HTMLElement;
 resizer.addEventListener("mousedown", (e) => {
@@ -178,7 +182,7 @@ function renderForm(): void {
       </div>`;
 
   config.categories.forEach((cat: Category, cIdx: number) => {
-    let html = `<div class="box" style="border-left:4px solid ${config.themeColor}"><div class="box-header"><input type="text" value="${escapeHtml(cat.name)}" oninput="updateCat(${cIdx}, this.value)" style="font-weight:bold; width:50%;"><div style="display:flex;"><button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, 1)">⬇️</button><button class="btn btn-icon btn-red" style="margin-left:5px;" onclick="delCat(${cIdx})">🗑️</button></div></div>`;
+    let html = `<div class="box" ondragover="onCatDragOver(event)" ondrop="onCatDrop(event, ${cIdx})" style="border-left:4px solid ${config.themeColor}"><div class="box-header"><span class="drag-handle" draggable="true" ondragstart="onCatDragStart(event, ${cIdx})" title="ドラッグして並び替え">⠿</span><input type="text" value="${escapeHtml(cat.name)}" oninput="updateCat(${cIdx}, this.value)" style="font-weight:bold; width:50%;"><div style="display:flex;"><button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, 1)">⬇️</button><button class="btn btn-icon btn-red" style="margin-left:5px;" onclick="delCat(${cIdx})">🗑️</button></div></div>`;
     cat.links.forEach((link: LinkItem, lIdx: number) => {
       const check = linkCheckResults?.[`${cIdx}-${lIdx}`];
       const checkBadge = !check
@@ -186,7 +190,10 @@ function renderForm(): void {
         : check.ok
         ? `<span title="OK${check.status ? ` (HTTP ${check.status})` : ""}" style="font-size:16px;">✅</span>`
         : `<span title="${escapeHtml(check.error || (check.status ? `HTTP ${check.status}` : "確認できませんでした"))}" style="font-size:16px; cursor:help;">❌</span>`;
-      html += `<div class="row"><div style="position:relative;"><input type="text" value="${escapeHtml(link.icon)}" style="width:35px; text-align:center; cursor:pointer;" readonly onclick="togglePalette('pal-${cIdx}-${lIdx}')"><div id="pal-${cIdx}-${lIdx}" class="palette">${ICONS.map((ic) => `<div class="p-icon" onclick="setIcon(${cIdx},${lIdx},'${ic}')">${ic}</div>`).join("")}</div></div><div style="flex:1;"><input type="text" value="${escapeHtml(link.name)}" placeholder="名称" oninput="updateLink(${cIdx},${lIdx},'name',this.value)" style="margin-bottom:3px;"><input type="text" value="${escapeHtml(link.url)}" placeholder="URL" style="font-size:12px; color:#666;" oninput="updateLink(${cIdx},${lIdx},'url',this.value)"></div><div style="width:20px; text-align:center;">${checkBadge}</div><div style="display:flex; flex-direction:column; gap:2px;"><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, 1)">⬇️</button></div><button class="btn btn-icon btn-red" style="height:auto;" onclick="delLink(${cIdx},${lIdx})">×</button></div>`;
+      const clicksBadge = link.clicks
+        ? `<span title="累計クリック数(匿名集計)" style="font-size:11px; color:#95a5a6; white-space:nowrap;">👁 ${link.clicks}</span>`
+        : "";
+      html += `<div class="row" ondragover="onLinkDragOver(event)" ondrop="onLinkDrop(event, ${cIdx}, ${lIdx})"><span class="drag-handle" draggable="true" ondragstart="onLinkDragStart(event, ${cIdx}, ${lIdx})" title="ドラッグして並び替え">⠿</span><div style="position:relative;"><input type="text" value="${escapeHtml(link.icon)}" style="width:35px; text-align:center; cursor:pointer;" readonly onclick="togglePalette('pal-${cIdx}-${lIdx}')"><div id="pal-${cIdx}-${lIdx}" class="palette">${ICONS.map((ic) => `<div class="p-icon" onclick="setIcon(${cIdx},${lIdx},'${ic}')">${ic}</div>`).join("")}</div></div><div style="flex:1;"><input type="text" value="${escapeHtml(link.name)}" placeholder="名称" oninput="updateLink(${cIdx},${lIdx},'name',this.value)" style="margin-bottom:3px;"><input type="text" value="${escapeHtml(link.url)}" placeholder="URL" style="font-size:12px; color:#666;" oninput="updateLink(${cIdx},${lIdx},'url',this.value)"></div><div style="width:20px; text-align:center;">${checkBadge}</div>${clicksBadge}<div style="display:flex; flex-direction:column; gap:2px;"><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, 1)">⬇️</button></div><button class="btn btn-icon btn-red" style="height:auto;" onclick="delLink(${cIdx},${lIdx})">×</button></div>`;
     });
     html += `<button class="btn btn-blue" onclick="addLink(${cIdx})" style="background:${config.themeColor}22; color:${config.themeColor}; border-color:${config.themeColor};">＋ リンクを追加</button></div>`;
     formArea.innerHTML += html;
@@ -233,6 +240,55 @@ function moveLink(c: number, l: number, dir: number): void {
   renderForm();
   updatePreview();
 }
+// カテゴリのドラッグ&ドロップ並び替え(SPEC.md §5.2.2)。⬆️⬇️ボタンと同じ並び替え操作の
+// 代替手段であり、保存(saveToServer)するまでデータベースには反映されない。
+function onCatDragStart(e: DragEvent, idx: number): void {
+  dragCatIdx = idx;
+  dragLink = null;
+  e.dataTransfer?.setData("text/plain", String(idx));
+}
+function onCatDragOver(e: DragEvent): void {
+  if (dragCatIdx === null) return;
+  e.preventDefault();
+}
+function onCatDrop(e: DragEvent, idx: number): void {
+  if (dragCatIdx === null) return;
+  e.preventDefault();
+  if (dragCatIdx !== idx) {
+    const [moved] = config.categories.splice(dragCatIdx, 1);
+    config.categories.splice(idx, 0, moved);
+    linkCheckResults = null;
+    renderForm();
+    updatePreview();
+  }
+  dragCatIdx = null;
+}
+
+// リンクのドラッグ&ドロップ並び替え。誤操作防止のため同一カテゴリ内のみ対応する
+// (カテゴリをまたいだ移動は行わない)。
+function onLinkDragStart(e: DragEvent, c: number, l: number): void {
+  dragLink = { cat: c, link: l };
+  dragCatIdx = null;
+  e.dataTransfer?.setData("text/plain", `${c}-${l}`);
+}
+function onLinkDragOver(e: DragEvent): void {
+  if (!dragLink) return;
+  e.preventDefault();
+}
+function onLinkDrop(e: DragEvent, c: number, l: number): void {
+  if (!dragLink) return;
+  e.preventDefault();
+  if (dragLink.cat === c && dragLink.link !== l) {
+    const links = config.categories[c].links;
+    const [moved] = links.splice(dragLink.link, 1);
+    links.splice(l, 0, moved);
+    linkCheckResults = null;
+    renderForm();
+    updatePreview();
+  }
+  dragLink = null;
+}
+
 function togglePalette(id: string): void {
   document.querySelectorAll<HTMLElement>(".palette").forEach((el) => (el.style.display = "none"));
   const palette = document.getElementById(id);
@@ -464,6 +520,67 @@ async function resetToDefault(): Promise<void> {
   }
 }
 
+interface HistoryEntrySummary {
+  id: number;
+  changedAt: string;
+}
+
+// 変更履歴パネルを開き、一覧(新しい順)を取得して表示する(SPEC.md §4.7, §5.2.2)。
+async function openHistory(): Promise<void> {
+  const modal = document.getElementById("history-modal")!;
+  const listEl = document.getElementById("history-list")!;
+  listEl.innerHTML = "読み込み中...";
+  modal.style.display = "flex";
+  try {
+    const res = await fetch("/api/history");
+    if (!res.ok) throw new Error("変更履歴の取得に失敗しました");
+    const data = await res.json() as { entries: HistoryEntrySummary[] };
+    if (data.entries.length === 0) {
+      listEl.innerHTML = `<div class="history-empty">変更履歴はまだありません。</div>`;
+      return;
+    }
+    listEl.innerHTML = data.entries
+      .map(
+        (entry) =>
+          `<div class="history-row"><span>${escapeHtml(new Date(entry.changedAt).toLocaleString("ja-JP"))}</span><button class="btn" style="background:#e8f5f0; color:#00a968; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:bold;" onclick="restoreHistory(${entry.id})">この内容を確認</button></div>`,
+      )
+      .join("");
+  } catch (error) {
+    listEl.innerHTML = `<div class="history-empty">❌ ${escapeHtml((error as Error).message)}</div>`;
+  }
+}
+
+function closeHistory(): void {
+  document.getElementById("history-modal")!.style.display = "none";
+}
+
+// 選択した変更履歴のスナップショットを編集画面に読み込む。データベースへはまだ保存されず、
+// 「保存」ボタンを押すまで反映されない(既存のインポート機能と同じ流れ)。
+async function restoreHistory(id: number): Promise<void> {
+  if (
+    !confirm(
+      "この変更履歴の内容を編集画面に読み込みますか?\n\n現在の未保存の編集内容は失われます。読み込んだ後、「保存」を押すまでデータベースには反映されません。",
+    )
+  ) {
+    return;
+  }
+  try {
+    const res = await fetch(`/api/history/${id}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "変更履歴の取得に失敗しました");
+    config = normalizeConfig((data as { config: PortalConfig }).config);
+    linkCheckResults = null;
+    closeHistory();
+    renderForm();
+    updatePreview();
+    updateStorageStatus(
+      `📜 変更履歴を読み込みました (${new Date((data as { changedAt: string }).changedAt).toLocaleString("ja-JP")}時点・未保存)`,
+    );
+  } catch (error) {
+    alert("❌ 変更履歴の読み込みに失敗しました。\n\n" + (error as Error).message);
+  }
+}
+
 // パレットの外側クリックで閉じる
 document.addEventListener("click", (e) => {
   const target = e.target as HTMLElement;
@@ -483,6 +600,12 @@ Object.assign(globalThis, {
   updateCat,
   moveCat,
   moveLink,
+  onCatDragStart,
+  onCatDragOver,
+  onCatDrop,
+  onLinkDragStart,
+  onLinkDragOver,
+  onLinkDrop,
   togglePalette,
   setIcon,
   delCat,
@@ -496,6 +619,9 @@ Object.assign(globalThis, {
   importJSON,
   handleImportFile,
   resetToDefault,
+  openHistory,
+  closeHistory,
+  restoreHistory,
 });
 
 // 初期化: データベースから設定を読み込む

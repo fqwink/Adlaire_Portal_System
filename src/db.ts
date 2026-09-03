@@ -10,13 +10,15 @@ import seedDataRaw from "./portal-config.json" with { type: "json" };
 const seedData = seedDataRaw as PortalConfig;
 
 const dataDirUrl = new URL("../data/", import.meta.url);
+const backupDirUrl = new URL("./backups/", dataDirUrl);
 try {
   await Deno.mkdir(dataDirUrl, { recursive: true });
 } catch (err) {
   if (!(err instanceof Deno.errors.AlreadyExists)) throw err;
 }
 
-const db = new Database(new URL("./portal.db", dataDirUrl));
+const DB_PATH = new URL("./portal.db", dataDirUrl);
+const db = new Database(DB_PATH);
 db.exec("PRAGMA foreign_keys = ON;");
 
 db.exec(`
@@ -48,6 +50,21 @@ db.exec(`
     icon TEXT NOT NULL,
     sort_order INTEGER NOT NULL
   );
+
+  -- リンクURLごとの匿名クリック集計。個人・端末を識別する情報は一切持たない(SPEC.md §1.3)。
+  -- links行はPUTのたびに全削除・再作成されるため、リンクのidではなくURL文字列をキーにして
+  -- 保存内容が変わっても集計を維持する。
+  CREATE TABLE IF NOT EXISTS link_clicks (
+    url TEXT PRIMARY KEY,
+    count INTEGER NOT NULL DEFAULT 0
+  );
+
+  -- 設定が保存されるたびのスナップショット。誰が変更したかは記録しない(認証機能がないため)。
+  CREATE TABLE IF NOT EXISTS change_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    changed_at TEXT NOT NULL,
+    config_json TEXT NOT NULL
+  );
 `);
 
 // 旧スキーマ(version列なし)で作成済みのDBに対する軽量マイグレーション
@@ -55,6 +72,8 @@ const settingsColumns = db.prepare("PRAGMA table_info(settings)").all<{ name: st
 if (!settingsColumns.some((c) => c.name === "version")) {
   db.exec("ALTER TABLE settings ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
 }
+
+const MAX_HISTORY_ENTRIES = 50;
 
 interface SettingsRow {
   title: string;
@@ -74,6 +93,24 @@ export class VersionConflictError extends Error {
   }
 }
 
+// URLごとの匿名クリック回数。キーはlinksテーブルと同じURL文字列。
+export function getClickCounts(): Record<string, number> {
+  const rows = db.prepare("SELECT url, count FROM link_clicks").all<{ url: string; count: number }>();
+  const result: Record<string, number> = {};
+  rows.forEach((row) => {
+    result[row.url] = row.count;
+  });
+  return result;
+}
+
+// リンクのクリックを1件記録する(閲覧画面から匿名で送信される。SPEC.md §4.6)。
+export function recordClick(url: string): void {
+  db.prepare(
+    "INSERT INTO link_clicks (url, count) VALUES (?, 1) " +
+      "ON CONFLICT(url) DO UPDATE SET count = count + 1",
+  ).run(url);
+}
+
 export function getConfig(): PortalConfig | null {
   const settings = db
     .prepare("SELECT title, theme_color AS themeColor FROM settings WHERE id = 1")
@@ -84,6 +121,8 @@ export function getConfig(): PortalConfig | null {
     .prepare("SELECT date, text FROM news ORDER BY sort_order ASC, id ASC")
     .all<NewsItem>();
 
+  const clickCounts = getClickCounts();
+
   const categories: Category[] = db
     .prepare("SELECT id, name FROM categories ORDER BY sort_order ASC, id ASC")
     .all<CategoryRow>()
@@ -92,7 +131,11 @@ export function getConfig(): PortalConfig | null {
         .prepare(
           "SELECT name, url, icon FROM links WHERE category_id = ? ORDER BY sort_order ASC, id ASC",
         )
-        .all<LinkItem>(cat.id);
+        .all<LinkItem>(cat.id)
+        .map((link) => {
+          const clicks = clickCounts[link.url];
+          return clicks ? { ...link, clicks } : link;
+        });
       return { name: cat.name, links };
     });
 
@@ -136,6 +179,17 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
       insertLink.run(categoryId, link.name, link.url, link.icon, lIdx);
     });
   });
+
+  // 変更履歴として、保存後の設定全体をスナップショットとして残す(誰が変更したかは記録しない)。
+  db.prepare("INSERT INTO change_log (changed_at, config_json) VALUES (?, ?)").run(
+    new Date().toISOString(),
+    JSON.stringify(config),
+  );
+  db.exec(
+    `DELETE FROM change_log WHERE id NOT IN (
+      SELECT id FROM change_log ORDER BY id DESC LIMIT ${MAX_HISTORY_ENTRIES}
+    )`,
+  );
 });
 
 export function replaceConfig(raw: unknown, expectedVersion?: number): PortalConfig {
@@ -148,6 +202,27 @@ export function resetToSeed(): PortalConfig {
   return replaceConfig(seedData);
 }
 
+export interface HistoryEntrySummary {
+  id: number;
+  changedAt: string;
+}
+
+// 変更履歴の一覧(新しい順)。内容(config_json)は含めない軽量な一覧。
+export function getHistoryList(): HistoryEntrySummary[] {
+  return db
+    .prepare("SELECT id, changed_at AS changedAt FROM change_log ORDER BY id DESC")
+    .all<HistoryEntrySummary>();
+}
+
+// 変更履歴1件のスナップショット(保存当時の設定全体)を取得する。存在しない場合はnull。
+export function getHistoryEntry(id: number): { changedAt: string; config: PortalConfig } | null {
+  const row = db
+    .prepare("SELECT changed_at AS changedAt, config_json AS configJson FROM change_log WHERE id = ?")
+    .get<{ changedAt: string; configJson: string }>(id);
+  if (!row) return null;
+  return { changedAt: row.changedAt, config: JSON.parse(row.configJson) as PortalConfig };
+}
+
 function ensureSeeded(): void {
   const existing = db.prepare("SELECT id FROM settings WHERE id = 1").get();
   if (!existing) {
@@ -156,3 +231,30 @@ function ensureSeeded(): void {
 }
 
 ensureSeeded();
+
+const MAX_BACKUPS_TO_KEEP = 24;
+
+// data/portal.db を data/backups/ へタイムスタンプ付きでコピーし、古いものを削除する。
+// SQLiteファイルの書き込み中に呼ばれる可能性を完全には排除できないベストエフォートな
+// バックアップであり、トランザクション整合性を厳密に保証するものではない
+// (このシステムの用途では書き込み頻度が低く、実用上のリスクは小さいと判断している)。
+export async function backupDatabase(): Promise<void> {
+  await Deno.mkdir(backupDirUrl, { recursive: true }).catch((err) => {
+    if (!(err instanceof Deno.errors.AlreadyExists)) throw err;
+  });
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupUrl = new URL(`./portal-${timestamp}.db`, backupDirUrl);
+  await Deno.copyFile(DB_PATH, backupUrl);
+
+  const entries: { name: string; url: URL }[] = [];
+  for await (const entry of Deno.readDir(backupDirUrl)) {
+    if (entry.isFile && entry.name.startsWith("portal-") && entry.name.endsWith(".db")) {
+      entries.push({ name: entry.name, url: new URL(entry.name, backupDirUrl) });
+    }
+  }
+  entries.sort((a, b) => (a.name < b.name ? 1 : -1)); // ファイル名(タイムスタンプ)の新しい順
+  for (const old of entries.slice(MAX_BACKUPS_TO_KEEP)) {
+    await Deno.remove(old.url).catch(() => {});
+  }
+}

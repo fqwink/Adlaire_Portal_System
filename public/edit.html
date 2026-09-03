@@ -49,13 +49,33 @@
   .palette { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; padding: 8px; background: #f8f9fa; border-radius: 6px; display: none; position: absolute; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
   .p-icon { cursor: pointer; padding: 5px; border-radius: 4px; background: white; border: 1px solid #eee; font-size: 18px; transition: 0.2s; }
   .p-icon:hover { background: #00a968; transform: scale(1.1); }
+
+  .drag-handle { cursor: grab; color: #bbb; font-size: 14px; padding: 0 6px; user-select: none; flex-shrink: 0; }
+  .drag-handle:hover { color: #00a968; }
+  .drag-handle:active { cursor: grabbing; }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000;
+    align-items: center; justify-content: center;
+  }
+  .modal-box {
+    background: #fff; border-radius: 10px; width: 420px; max-width: 90vw; max-height: 80vh;
+    display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+  }
+  .modal-header { padding: 15px 20px; border-bottom: 1px solid #e9ecef; display: flex; justify-content: space-between; align-items: center; }
+  .modal-header h3 { margin: 0; font-size: 15px; color: #2c3e50; }
+  .modal-close { cursor: pointer; border: none; background: none; font-size: 18px; color: #95a5a6; }
+  .modal-body { padding: 10px 20px; overflow-y: auto; }
+  .history-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px dashed #eee; font-size: 13px; color: #444; }
+  .history-row:last-child { border-bottom: none; }
+  .history-empty { padding: 20px 0; text-align: center; color: #95a5a6; font-size: 13px; }
 </style>
 </head>
 <body>
 
 <div class="editor-panel" id="editorPanel">
   <div class="editor-header">
-    <h2>🛠️ 設定エディタ <span class="badge">Adlaire v5.3</span></h2>
+    <h2>🛠️ 設定エディタ <span class="badge">Adlaire v5.4</span></h2>
     <div style="font-size: 11px; color: #95a5a6; margin-top: 5px;" id="storage-status">🗄️ データベースに接続中...</div>
   </div>
   <div class="editor-content" id="form-area">読み込み中...</div>
@@ -66,15 +86,23 @@
       <button class="btn" onclick="importJSON()" style="flex: 1; background: #9b59b6; color: white; padding: 10px; border-radius: 8px; font-weight: bold;">📥 インポート</button>
     </div>
     <button class="btn" id="check-links-btn" onclick="checkLinks()" style="background: #f0f4f8; color: #34495e; padding: 8px; border-radius: 8px; font-weight: bold; width: 100%; margin-top: 10px;">🔗 リンクをチェック</button>
+    <button class="btn" onclick="openHistory()" style="background: #f0f4f8; color: #34495e; padding: 8px; border-radius: 8px; font-weight: bold; width: 100%; margin-top: 10px;">📜 変更履歴</button>
     <button class="btn" onclick="resetToDefault()" style="background: #e74c3c22; color: #e74c3c; padding: 8px; border-radius: 8px; font-weight: bold; width: 100%; margin-top: 10px;">🔄 デフォルトに戻す</button>
     <input type="file" id="import-file" accept=".json" style="display: none;" onchange="handleImportFile(event)">
-    <div class="version-info">Adlaire Portal System v5.3 (Deno + TypeScript + SQLite)<br>© 2026 All Rights Reserved</div>
+    <div class="version-info">Adlaire Portal System v5.4 (Deno + TypeScript + SQLite)<br>© 2026 All Rights Reserved</div>
   </div>
 </div>
 <div class="resizer" id="dragHandle"></div>
 <div class="preview-panel">
   <div class="preview-bar"><span>🔍 Live Preview</span><div class="view-toggle"><button class="vt-btn active" onclick="setView('pc')" id="btn-pc">💻 PC</button><button class="vt-btn" onclick="setView('mobile')" id="btn-mobile">📱 スマホ</button></div></div>
   <div class="preview-frame-container"><iframe id="preview-frame" class="mode-pc"></iframe></div>
+</div>
+
+<div class="modal-overlay" id="history-modal">
+  <div class="modal-box">
+    <div class="modal-header"><h3>📜 変更履歴</h3><button class="modal-close" onclick="closeHistory()">✕</button></div>
+    <div class="modal-body" id="history-list"></div>
+  </div>
 </div>
 
 <!-- ロジックは src/client/edit.ts (TypeScript) が正本。`deno task build` で js/edit.js を生成する -->

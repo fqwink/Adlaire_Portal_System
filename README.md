@@ -26,6 +26,12 @@ deno task start
 PORT=8080 deno task start
 ```
 
+DBの定期バックアップ間隔（既定60分）を変更したい場合は `BACKUP_INTERVAL_MINUTES` 環境変数を指定してください
+（`0`を指定すると無効化できます）。
+```bash
+BACKUP_INTERVAL_MINUTES=30 deno task start
+```
+
 Denoのインストールがまだの場合:
 ```bash
 curl -fsSL https://deno.land/install.sh | sh
@@ -47,6 +53,9 @@ deno --version   # v2.9以上推奨
 他の人が先に保存していた場合、保存時に競合が通知され最新の内容を再取得します（編集内容は失われるため、
 長時間の編集の前に「📤 エクスポート」でバックアップを取ることを推奨します）。
 また「🔗 リンクをチェック」ボタンで、画面上の全リンクの到達可否をその場で確認できます（結果はDBには保存されません）。
+「📜 変更履歴」ボタンでは、過去の保存内容（直近50件）を確認し、必要であれば編集画面に読み込めます
+（読み込んだだけではDBに反映されず、別途「保存」が必要です）。
+カテゴリ・リンクの並び替えは、⬆️⬇️ボタンのほかドラッグ&ドロップ（各行左端の⠿ハンドル）でも行えます。
 
 操作の詳細（各ボタンの挙動、バリデーション仕様など）は [`SPEC.md`](./SPEC.md) の「5. 画面仕様」を参照してください。
 
@@ -56,6 +65,11 @@ deno task dev              # ビルドせず src/server.ts を直接実行 + フ
 deno task check              # 型チェックのみ実行
 deno task validate-config    # src/portal-config.json (シードデータ) の検証のみ実行
 ```
+
+## 📊 ログ・バックアップ・死活監視
+- **アクセスログ・エラーログ**: `data/access.log` に標準出力と同じ内容を追記します（詳細は[`SPEC.md`](./SPEC.md)「8. 非機能仕様」）
+- **DBバックアップ**: `data/backups/` に定期的（既定60分間隔）にコピーされます。直近24世代のみ保持されます（詳細は[`SPEC.md`](./SPEC.md)「2.3 DBバックアップ」）
+- **ヘルスチェック**: `GET /healthz` で `{ "status": "ok", "uptimeSeconds": ... }` を返します（監視ツールからの死活監視用）
 
 ## 🔒 運用上の注意
 - 編集画面のAPIには認証がありません。**信頼できる社内ネットワーク内でのみ運用してください**
@@ -92,12 +106,12 @@ A. `jsr:@db/sqlite`（Deno組み込みではなくFFIベースのSQLiteライブ
 このシステムは独自開発のため、自由にカスタマイズ・配布できます。
 
 ## ℹ️ バージョン情報
-- **Version**: 5.3
+- **Version**: 5.4
 - **Name**: Adlaire Portal System
 
 変更履歴は [`SPEC.md`](./SPEC.md) の「10. 変更履歴」に記載しています。
 
 ---
 
-**Adlaire Portal System** v5.3
+**Adlaire Portal System** v5.4
 © 2026 All Rights Reserved

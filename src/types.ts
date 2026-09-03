@@ -10,6 +10,10 @@ export interface LinkItem {
   name: string;
   url: string;
   icon: string;
+  // サーバーが GET /api/config のたびに link_clicks テーブルから付与する、匿名の
+  // 累積クリック数(読み取り専用の派生情報)。0件のときは省略される。PUTの入力として
+  // 送っても無視される(保存内容には反映されない)。
+  clicks?: number;
 }
 
 export interface Category {

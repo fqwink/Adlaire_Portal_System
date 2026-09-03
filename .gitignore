@@ -2,6 +2,8 @@ data/*.db
 data/*.db-journal
 data/*.db-wal
 data/*.db-shm
+data/access.log
+data/backups/
 
 # ビルド生成物 (deno task build で src/*.ts から再生成される)
 dist/
