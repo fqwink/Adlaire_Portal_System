@@ -59,6 +59,32 @@ function renderPortal(config: PortalConfig): void {
   document.getElementById("today-date")!.textContent =
     `${now.getFullYear()}.${(now.getMonth() + 1).toString().padStart(2, "0")}.${now.getDate().toString().padStart(2, "0")}`;
 
+  // ピン留めリンク(編集者が portal-config.json 上で pinned:true を指定したリンク)を表示する。
+  // 閲覧者ごとの「お気に入り」ではなく、全員に共通の静的な表示であることに注意(SPEC.md §1.3)。
+  const pinnedArea = document.getElementById("pinned-area")!;
+  const pinnedList = document.getElementById("pinned-list")!;
+  pinnedList.innerHTML = "";
+
+  const pinnedLinks = config.categories.flatMap((cat) =>
+    cat.links.filter((link) => link.pinned).map((link) => ({ link, categoryName: cat.name }))
+  );
+
+  if (pinnedLinks.length > 0) {
+    pinnedArea.style.display = "block";
+    pinnedLinks.forEach(({ link, categoryName }) => {
+      const a = document.createElement("a");
+      a.href = sanitizeUrl(link.url);
+      a.className = "card";
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.title = categoryName;
+      a.innerHTML = `<span class="card-icon">${escapeHtml(link.icon)}</span><span class="card-name">${escapeHtml(link.name)}</span>`;
+      pinnedList.appendChild(a);
+    });
+  } else {
+    pinnedArea.style.display = "none";
+  }
+
   const newsArea = document.getElementById("news-area")!;
   const newsList = document.getElementById("news-list")!;
   newsList.innerHTML = "";

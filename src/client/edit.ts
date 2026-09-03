@@ -85,6 +85,7 @@ function buildPortalCss(): string {
     .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; margin-top: 15px; }
     .card { background: #fff; padding: 20px; border-radius: 12px; text-align: center; color: #444; text-decoration: none; box-shadow: var(--shadow); display: flex; flex-direction: column; align-items: center; border: 1px solid transparent; transition: 0.2s; }
     .card:hover { border-color: var(--primary); transform: translateY(-3px); }
+    .card.pinned { border-color: var(--primary); }
     .icon { font-size: 32px; margin-bottom: 10px; } .name { font-weight: bold; font-size: 13px; }
     @media (max-width: 768px) {
       .layout { flex-direction: column; }
@@ -125,10 +126,15 @@ function updatePreview(): void {
       </ul></div>`
     : "";
 
+  const pinnedLinks = config.categories.flatMap((cat) => cat.links.filter((l) => l.pinned));
+  const pinnedHtml = pinnedLinks.length > 0
+    ? `<div class="cat-head">📌 ピン留め</div><div class="grid">${pinnedLinks.map((l) => `<a class="card pinned"><span class="icon">${escapeHtml(l.icon)}</span><span class="name">${escapeHtml(l.name)}</span></a>`).join("")}</div>`
+    : "";
+
   const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>${css}</style></head><body>
       <div class="layout"><div class="sidebar"><div><h1>${escapeHtml(config.title)}</h1><div style="font-size:11px; color:#999; margin-bottom:20px;">${new Date().toLocaleDateString("ja-JP")}</div></div>
       <div style="flex:1;">${config.categories.map((cat) => `<div class="nav-item"><span>${escapeHtml(cat.name)}</span><span class="count">${cat.links.length}</span></div>`).join("")}</div></div>
-      <div class="main">${newsHtml}
+      <div class="main">${pinnedHtml}${newsHtml}
       ${config.categories.map((cat) => `<div class="cat-head">${escapeHtml(cat.name)}</div><div class="grid">${cat.links.map((l) => `<a class="card"><span class="icon">${escapeHtml(l.icon)}</span><span class="name">${escapeHtml(l.name)}</span></a>`).join("")}</div>`).join("")}
       </div></div></body></html>`;
   iframe.srcdoc = html;
@@ -160,7 +166,10 @@ function renderForm(): void {
   config.categories.forEach((cat: Category, cIdx: number) => {
     let html = `<div class="box" style="border-left:4px solid ${config.themeColor}"><div class="box-header"><input type="text" value="${escapeHtml(cat.name)}" oninput="updateCat(${cIdx}, this.value)" style="font-weight:bold; width:50%;"><div style="display:flex;"><button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, 1)">⬇️</button><button class="btn btn-icon btn-red" style="margin-left:5px;" onclick="delCat(${cIdx})">🗑️</button></div></div>`;
     cat.links.forEach((link: LinkItem, lIdx: number) => {
-      html += `<div class="row"><div style="position:relative;"><input type="text" value="${escapeHtml(link.icon)}" style="width:35px; text-align:center; cursor:pointer;" readonly onclick="togglePalette('pal-${cIdx}-${lIdx}')"><div id="pal-${cIdx}-${lIdx}" class="palette">${ICONS.map((ic) => `<div class="p-icon" onclick="setIcon(${cIdx},${lIdx},'${ic}')">${ic}</div>`).join("")}</div></div><div style="flex:1;"><input type="text" value="${escapeHtml(link.name)}" placeholder="名称" oninput="updateLink(${cIdx},${lIdx},'name',this.value)" style="margin-bottom:3px;"><input type="text" value="${escapeHtml(link.url)}" placeholder="URL" style="font-size:12px; color:#666;" oninput="updateLink(${cIdx},${lIdx},'url',this.value)"></div><div style="display:flex; flex-direction:column; gap:2px;"><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, 1)">⬇️</button></div><button class="btn btn-icon btn-red" style="height:auto;" onclick="delLink(${cIdx},${lIdx})">×</button></div>`;
+      const pinBtnStyle = link.pinned
+        ? `background:${config.themeColor}; color:#fff;`
+        : `background:#f1f3f5; color:#495057;`;
+      html += `<div class="row"><div style="position:relative;"><input type="text" value="${escapeHtml(link.icon)}" style="width:35px; text-align:center; cursor:pointer;" readonly onclick="togglePalette('pal-${cIdx}-${lIdx}')"><div id="pal-${cIdx}-${lIdx}" class="palette">${ICONS.map((ic) => `<div class="p-icon" onclick="setIcon(${cIdx},${lIdx},'${ic}')">${ic}</div>`).join("")}</div></div><div style="flex:1;"><input type="text" value="${escapeHtml(link.name)}" placeholder="名称" oninput="updateLink(${cIdx},${lIdx},'name',this.value)" style="margin-bottom:3px;"><input type="text" value="${escapeHtml(link.url)}" placeholder="URL" style="font-size:12px; color:#666;" oninput="updateLink(${cIdx},${lIdx},'url',this.value)"></div><button class="btn btn-icon" style="${pinBtnStyle}" title="ピン留め" onclick="togglePinned(${cIdx},${lIdx})">📌</button><div style="display:flex; flex-direction:column; gap:2px;"><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, 1)">⬇️</button></div><button class="btn btn-icon btn-red" style="height:auto;" onclick="delLink(${cIdx},${lIdx})">×</button></div>`;
     });
     html += `<button class="btn btn-blue" onclick="addLink(${cIdx})" style="background:${config.themeColor}22; color:${config.themeColor}; border-color:${config.themeColor};">＋ リンクを追加</button></div>`;
     formArea.innerHTML += html;
@@ -228,12 +237,18 @@ function addCat(): void {
   renderForm();
   updatePreview();
 }
-function updateLink(c: number, l: number, k: keyof LinkItem, v: string): void {
+function updateLink(c: number, l: number, k: "name" | "url" | "icon", v: string): void {
   config.categories[c].links[l][k] = v;
   updatePreview();
 }
 function delLink(c: number, l: number): void {
   config.categories[c].links.splice(l, 1);
+  renderForm();
+  updatePreview();
+}
+function togglePinned(c: number, l: number): void {
+  const link = config.categories[c].links[l];
+  link.pinned = !link.pinned;
   renderForm();
   updatePreview();
 }
@@ -371,6 +386,7 @@ Object.assign(globalThis, {
   addCat,
   updateLink,
   delLink,
+  togglePinned,
   addLink,
   saveToFile,
   exportJSON,

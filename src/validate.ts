@@ -49,6 +49,9 @@ export function validateConfig(raw: unknown): PortalConfig {
       if (!isValidUrl(link.url)) {
         throw new Error(`カテゴリ[${i}]のリンク[${j}]のURLが不正です`);
       }
+      if (link.pinned !== undefined && typeof link.pinned !== "boolean") {
+        throw new Error(`カテゴリ[${i}]のリンク[${j}]のpinnedはtrue/falseで指定してください`);
+      }
     });
   });
 
