@@ -3,10 +3,11 @@
 // および scripts/check-config.ts によるシードデータのビルド前検証) から呼び出される。
 // isValidUrl() は src/server.ts の check-links エンドポイントでも入力検証に使う。
 
-import type { PortalConfig } from "./types.ts";
+import type { NewsLabel, PortalConfig } from "./types.ts";
 
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const NEWS_LABELS: NewsLabel[] = ["important", "maintenance"];
 
 // portal.html の sanitizeUrl() と同じ基準で検証する
 export function isValidUrl(url: unknown): boolean {
@@ -36,6 +37,9 @@ export function validateConfig(raw: unknown): PortalConfig {
   ) {
     throw new Error("天気表示の地点名が不正です");
   }
+  if (config.useFavicon !== undefined && typeof config.useFavicon !== "boolean") {
+    throw new Error("ファビコン表示設定が不正です");
+  }
 
   const news = Array.isArray(config.news) ? config.news : [];
   news.forEach((item, i) => {
@@ -49,6 +53,9 @@ export function validateConfig(raw: unknown): PortalConfig {
       if (typeof item.expiresAt !== "string" || !DATE_RE.test(item.expiresAt)) {
         throw new Error(`お知らせ[${i}]の有効期限の形式が不正です (例: 2026-12-31)`);
       }
+    }
+    if (item.label && !NEWS_LABELS.includes(item.label)) {
+      throw new Error(`お知らせ[${i}]の種別ラベルが不正です`);
     }
   });
 
@@ -69,6 +76,9 @@ export function validateConfig(raw: unknown): PortalConfig {
       if (!isValidUrl(link.url)) {
         throw new Error(`カテゴリ[${i}]のリンク[${j}]のURLが不正です`);
       }
+      if (link.memo !== undefined && typeof link.memo !== "string") {
+        throw new Error(`カテゴリ[${i}]のリンク[${j}]のメモが不正です`);
+      }
     });
   });
 
@@ -78,5 +88,6 @@ export function validateConfig(raw: unknown): PortalConfig {
     news,
     categories: config.categories,
     ...(config.weatherLocation ? { weatherLocation: config.weatherLocation } : {}),
+    ...(config.useFavicon ? { useFavicon: config.useFavicon } : {}),
   } as PortalConfig;
 }

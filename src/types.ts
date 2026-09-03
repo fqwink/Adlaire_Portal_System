@@ -1,6 +1,9 @@
 // Adlaire Portal System - 共有型定義
 // src/validate.ts・src/db.ts・src/client/*.ts・scripts/check-config.ts で共通利用する。
 
+// お知らせの種別ラベル。省略時は「一般」扱いでラベル表示を行わない。
+export type NewsLabel = "important" | "maintenance";
+
 export interface NewsItem {
   date: string;
   text: string;
@@ -8,6 +11,8 @@ export interface NewsItem {
   pinned?: boolean;
   // この日付(YYYY-MM-DD)を過ぎたら閲覧画面に表示しなくなる、任意の有効期限。省略時は無期限。
   expiresAt?: string;
+  // 種別ラベル(SPEC.md §3.2, §5.1.2)。省略時は「一般」(ラベルバッジを表示しない)。
+  label?: NewsLabel;
 }
 
 export interface LinkItem {
@@ -25,6 +30,8 @@ export interface LinkItem {
   // (読み取り専用の派生情報)。到達可能、または未チェックの場合は省略される。PUTの入力として
   // 送っても無視される。
   broken?: boolean;
+  // 編集者が入力する任意の補足説明。閲覧画面ではカードのツールチップ(title属性)として表示する。
+  memo?: string;
 }
 
 export interface Category {
@@ -43,6 +50,9 @@ export interface PortalConfig {
   // 天気表示に使う地点名(Open-Meteoのジオコーディングに渡す文字列。例: "Tokyo")。編集者が指定する
   // 通常の入力項目。省略・空文字列の場合、閲覧画面には天気ウィジェットを表示しない。
   weatherLocation?: string;
+  // trueの場合、閲覧画面のリンクカードでicon(絵文字)の代わりにリンク先のファビコンを表示する。
+  // 取得に失敗した場合はiconにフォールバックする(§5.1.2)。省略時はfalse(絵文字のみ)。
+  useFavicon?: boolean;
 }
 
 // GET /api/weather のレスポンス形式。config(PortalConfig)には含まれない、
@@ -51,6 +61,8 @@ export interface WeatherInfo {
   location: string | null; // 設定されている地点名(weatherLocationをそのまま反映)。未設定の場合はnull
   resolvedName: string | null; // ジオコーディングで解決された地名(取得できた場合)
   tempC: number | null;
+  tempMaxC: number | null; // 当日の予想最高気温
+  tempMinC: number | null; // 当日の予想最低気温
   weatherCode: number | null; // WMO Weather interpretation code
   fetchedAt: string | null; // ISO 8601形式。データ取得日時
   error: string | null; // 取得に失敗した場合のエラーメッセージ

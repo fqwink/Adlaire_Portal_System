@@ -70,6 +70,15 @@ let dragCatIdx: number | null = null;
 let dragLink: { cat: number; link: number } | null = null;
 let dragNewsIdx: number | null = null;
 
+// リンクの一括操作(選択→移動/削除)で選択中のリンク。キーは"カテゴリindex-リンクindex"。
+// このブラウザタブ内だけの一時的な選択状態であり、保存・永続化は行わない(SPEC.md §1.3)。
+// カテゴリ/リンクの追加・削除・並び替えなど構造が変わる操作の際はクリアする(インデックスがずれるため)。
+let selectedLinks = new Set<string>();
+// 一括操作バーの移動先カテゴリの選択状態。renderForm()のたびに<select>を作り直すため、
+// 選択したチェックボックスが増えるなどして再描画されても選んだ移動先が保持されるよう、
+// DOM側ではなくこの変数で管理する(§5.2.2)。
+let bulkMoveTargetCatIdx = 0;
+
 // 元に戻す/やり直す(このブラウザタブ内だけの一時的な操作履歴。保存・永続化は行わない。SPEC.md §1.3)。
 const MAX_UNDO_STEPS = 50;
 let undoStack: PortalConfig[] = [];
@@ -90,6 +99,15 @@ function pushUndo(): void {
   redoStack = [];
 }
 
+// カテゴリ/リンクのindexがずれる操作(追加・削除・並び替え・一括インポート等)の直前に呼び、
+// 一括操作の選択状態(§5.2.2)をリセットする。pushUndo()から自動では行わない
+// (テキスト編集はmarkTextEdit()経由でpushUndo()を呼ぶがrenderForm()を伴わないため、
+// pushUndo()側で選択をクリアすると選択チェックボックス・操作バーの表示と実際の選択状態が
+// 食い違ってしまう)。
+function clearLinkSelectionSilently(): void {
+  selectedLinks.clear();
+}
+
 // テキスト入力の変更をUndo1単位にまとめて記録する。update系関数の先頭で呼ぶ。
 function markTextEdit(): void {
   if (!textEditDirty) {
@@ -103,6 +121,7 @@ function undo(): void {
   redoStack.push(cloneConfig(config));
   config = undoStack.pop()!;
   linkCheckResults = null;
+  selectedLinks.clear();
   renderForm();
   updatePreview();
   updateStorageStatus("↩️ 元に戻しました (未保存)");
@@ -113,6 +132,7 @@ function redo(): void {
   undoStack.push(cloneConfig(config));
   config = redoStack.pop()!;
   linkCheckResults = null;
+  selectedLinks.clear();
   renderForm();
   updatePreview();
   updateStorageStatus("↪️ やり直しました (未保存)");
@@ -244,6 +264,12 @@ function renderForm(): void {
         <div class="row news-sub-row">
           <label style="font-size:10px; color:#999; margin:0; text-transform:none; white-space:nowrap;">📅 有効期限(空欄=無期限):</label>
           <input type="date" value="${escapeHtml(n.expiresAt || "")}" style="width:150px;" onchange="updateNewsExpiry(${idx}, this.value)">
+          <label style="font-size:10px; color:#999; margin:0 0 0 10px; text-transform:none; white-space:nowrap;">🏷️ 種別:</label>
+          <select style="font-size:11px;" onchange="updateNewsLabel(${idx}, this.value)">
+            <option value="" ${!n.label ? "selected" : ""}>一般</option>
+            <option value="important" ${n.label === "important" ? "selected" : ""}>重要</option>
+            <option value="maintenance" ${n.label === "maintenance" ? "selected" : ""}>メンテナンス</option>
+          </select>
         </div>
       </div>`,
     )
@@ -254,6 +280,7 @@ function renderForm(): void {
         <label>タイトル</label><input type="text" value="${escapeHtml(config.title)}" oninput="update('title', this.value)">
         <label>テーマカラー</label><input type="color" value="${config.themeColor || "#00a968"}" oninput="update('themeColor', this.value)">
         <label>🌤️ 天気表示の地点(空欄で非表示。例: Tokyo)</label><input type="text" value="${escapeHtml(config.weatherLocation || "")}" placeholder="例: Tokyo" oninput="update('weatherLocation', this.value)">
+        <label style="display:flex; align-items:center; gap:6px; margin-top:10px;"><input type="checkbox" style="width:auto;" ${config.useFavicon ? "checked" : ""} onchange="toggleUseFavicon(this.checked)"> 🌐 アイコンの代わりにリンク先のファビコンを表示する</label>
       </div>
       <div class="box">
         <label>📢 お知らせリスト</label>
@@ -279,12 +306,55 @@ function renderForm(): void {
       const clicksBadge = link.clicks
         ? `<span title="累計クリック数(匿名集計)" style="font-size:11px; color:#95a5a6; white-space:nowrap;">👁 ${link.clicks}</span>`
         : "";
-      html += `<div class="row" ondragover="onLinkDragOver(event)" ondrop="onLinkDrop(event, ${cIdx}, ${lIdx})"><span class="drag-handle" draggable="true" ondragstart="onLinkDragStart(event, ${cIdx}, ${lIdx})" title="ドラッグして並び替え">⠿</span><div style="position:relative;"><input type="text" value="${escapeHtml(link.icon)}" style="width:35px; text-align:center; cursor:pointer;" readonly onclick="togglePalette('pal-${cIdx}-${lIdx}')"><div id="pal-${cIdx}-${lIdx}" class="palette">${ICONS.map((ic) => `<div class="p-icon" onclick="setIcon(${cIdx},${lIdx},'${ic}')">${ic}</div>`).join("")}</div></div><div style="flex:1;"><input type="text" value="${escapeHtml(link.name)}" placeholder="名称" oninput="updateLink(${cIdx},${lIdx},'name',this.value)" style="margin-bottom:3px;"><input type="text" value="${escapeHtml(link.url)}" placeholder="URL" style="font-size:12px; color:#666;" oninput="updateLink(${cIdx},${lIdx},'url',this.value)"></div><div style="width:20px; text-align:center;">${checkBadge}</div>${clicksBadge}<div style="display:flex; flex-direction:column; gap:2px;"><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, 1)">⬇️</button></div><button class="btn btn-icon btn-red" style="height:auto;" onclick="delLink(${cIdx},${lIdx})">×</button></div>`;
+      const linkKey = `${cIdx}-${lIdx}`;
+      html += `<div class="link-entry" ondragover="onLinkDragOver(event)" ondrop="onLinkDrop(event, ${cIdx}, ${lIdx})">
+        <div class="row"><span class="drag-handle" draggable="true" ondragstart="onLinkDragStart(event, ${cIdx}, ${lIdx})" title="ドラッグして並び替え">⠿</span><input type="checkbox" class="link-select" style="width:auto; flex-shrink:0;" ${
+        selectedLinks.has(linkKey) ? "checked" : ""
+      } onchange="toggleLinkSelect(${cIdx},${lIdx})" title="一括操作用に選択"><div style="position:relative;"><input type="text" value="${
+        escapeHtml(link.icon)
+      }" style="width:35px; text-align:center; cursor:pointer;" readonly onclick="togglePalette('pal-${cIdx}-${lIdx}')"><div id="pal-${cIdx}-${lIdx}" class="palette">${
+        ICONS.map((ic) => `<div class="p-icon" onclick="setIcon(${cIdx},${lIdx},'${ic}')">${ic}</div>`).join("")
+      }</div></div><div style="flex:1;"><input type="text" value="${
+        escapeHtml(link.name)
+      }" placeholder="名称" oninput="updateLink(${cIdx},${lIdx},'name',this.value)" style="margin-bottom:3px;"><input type="text" value="${
+        escapeHtml(link.url)
+      }" placeholder="URL" style="font-size:12px; color:#666;" oninput="updateLink(${cIdx},${lIdx},'url',this.value)"></div><div style="width:20px; text-align:center;">${checkBadge}</div>${clicksBadge}<div style="display:flex; flex-direction:column; gap:2px;"><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveLink(${cIdx}, ${lIdx}, 1)">⬇️</button></div><button class="btn btn-icon btn-red" style="height:auto;" onclick="delLink(${cIdx},${lIdx})">×</button></div>
+        <div class="row link-sub-row">
+          <label style="font-size:10px; color:#999; margin:0; text-transform:none; white-space:nowrap;">📝 メモ:</label>
+          <input type="text" value="${
+        escapeHtml(link.memo || "")
+      }" placeholder="任意の補足説明(カードのツールチップに表示)" style="flex:1; font-size:12px;" oninput="updateLinkMemo(${cIdx},${lIdx},this.value)">
+        </div>
+      </div>`;
     });
     html += `<button class="btn btn-blue" onclick="addLink(${cIdx})" style="background:${config.themeColor}22; color:${config.themeColor}; border-color:${config.themeColor};">＋ リンクを追加</button></div>`;
     formArea.innerHTML += html;
   });
   formArea.innerHTML += `<button class="btn" style="width:100%; padding:15px; border:2px dashed #ccc; color:#666; font-weight:bold;" onclick="addCat()">＋ 新しいカテゴリを追加</button>`;
+  renderBulkActionBar();
+}
+
+// リンクの一括操作(選択→移動/削除)バーだけを描画する(SPEC.md §5.2.2)。チェックボックスを1つ
+// 押すたびに毎回renderForm()全体(全カテゴリ・全リンク行)を再構築すると、リンク数が多い場合に
+// 無駄な再描画コストとスクロール位置のリセットが発生するため、この操作バーだけを差し替える。
+function renderBulkActionBar(): void {
+  document.querySelector(".bulk-action-bar")?.remove();
+  if (selectedLinks.size === 0) return;
+  // 移動先に選んでいたカテゴリが削除されている等で存在しない場合は先頭にフォールバックする。
+  if (!config.categories[bulkMoveTargetCatIdx]) bulkMoveTargetCatIdx = 0;
+  const catOptions = config.categories
+    .map((cat, i) => `<option value="${i}" ${i === bulkMoveTargetCatIdx ? "selected" : ""}>${escapeHtml(cat.name)}</option>`)
+    .join("");
+  formArea.insertAdjacentHTML(
+    "beforeend",
+    `<div class="bulk-action-bar">
+        <span>✅ ${selectedLinks.size}件選択中</span>
+        <select id="bulk-move-target" onchange="updateBulkMoveTarget(this.value)">${catOptions}</select>
+        <button class="btn btn-blue" onclick="bulkMoveLinks(document.getElementById('bulk-move-target').value)">選択したカテゴリへ移動</button>
+        <button class="btn btn-icon btn-red" onclick="bulkDeleteLinks()">🗑️ 選択を削除</button>
+        <button class="btn" onclick="clearLinkSelection()">選択解除</button>
+      </div>`,
+  );
 }
 
 function update(k: "title" | "themeColor" | "weatherLocation", v: string): void {
@@ -366,6 +436,7 @@ function toggleCatHidden(i: number): void {
 function moveCat(i: number, dir: number): void {
   if (i + dir < 0 || i + dir >= config.categories.length) return;
   pushUndo();
+  clearLinkSelectionSilently();
   [config.categories[i], config.categories[i + dir]] = [config.categories[i + dir], config.categories[i]];
   linkCheckResults = null;
   renderForm();
@@ -375,6 +446,7 @@ function moveLink(c: number, l: number, dir: number): void {
   const links = config.categories[c].links;
   if (l + dir < 0 || l + dir >= links.length) return;
   pushUndo();
+  clearLinkSelectionSilently();
   [links[l], links[l + dir]] = [links[l + dir], links[l]];
   linkCheckResults = null;
   renderForm();
@@ -399,6 +471,7 @@ function onCatDrop(e: DragEvent, idx: number): void {
   if (dragCatIdx !== null) {
     if (dragCatIdx !== idx) {
       pushUndo();
+      clearLinkSelectionSilently();
       const [moved] = config.categories.splice(dragCatIdx, 1);
       config.categories.splice(idx, 0, moved);
       linkCheckResults = null;
@@ -410,6 +483,7 @@ function onCatDrop(e: DragEvent, idx: number): void {
   }
   if (dragLink) {
     pushUndo();
+    clearLinkSelectionSilently();
     const [moved] = config.categories[dragLink.cat].links.splice(dragLink.link, 1);
     config.categories[idx].links.push(moved);
     linkCheckResults = null;
@@ -436,6 +510,7 @@ function onLinkDrop(e: DragEvent, c: number, l: number): void {
   e.stopPropagation();
   if (dragLink.cat !== c || dragLink.link !== l) {
     pushUndo();
+    clearLinkSelectionSilently();
     const [moved] = config.categories[dragLink.cat].links.splice(dragLink.link, 1);
     // 同一カテゴリ内で自分より後ろの位置へ移動する場合、削除によって後続の添字が1つずれるため補正する。
     const insertAt = dragLink.cat === c && dragLink.link < l ? l - 1 : l;
@@ -462,6 +537,7 @@ function setIcon(c: number, l: number, ic: string): void {
 function delCat(i: number): void {
   if (confirm("このカテゴリを削除しますか?")) {
     pushUndo();
+    clearLinkSelectionSilently();
     config.categories.splice(i, 1);
     linkCheckResults = null;
     renderForm();
@@ -481,6 +557,7 @@ function updateLink(c: number, l: number, k: "name" | "url" | "icon", v: string)
 }
 function delLink(c: number, l: number): void {
   pushUndo();
+  clearLinkSelectionSilently();
   config.categories[c].links.splice(l, 1);
   linkCheckResults = null;
   renderForm();
@@ -489,6 +566,87 @@ function delLink(c: number, l: number): void {
 function addLink(c: number): void {
   pushUndo();
   config.categories[c].links.push({ name: "", url: "", icon: "📄" });
+  renderForm();
+  updatePreview();
+}
+// リンクへの任意の補足説明。閲覧画面ではカードのツールチップ(title属性)として表示する(SPEC.md §5.1.2)。
+function updateLinkMemo(c: number, l: number, v: string): void {
+  markTextEdit();
+  config.categories[c].links[l].memo = v || undefined;
+  updatePreview();
+}
+// お知らせの種別ラベル(SPEC.md §3.2, §5.1.2)。空文字列("一般")の場合はラベルなしとして扱う。
+function updateNewsLabel(i: number, v: string): void {
+  pushUndo();
+  config.news[i].label = (v || undefined) as NewsItem["label"];
+  updatePreview();
+}
+// リンクカードでアイコン絵文字の代わりにファビコンを表示するかどうかの設定(§5.1.2)。
+function toggleUseFavicon(v: boolean): void {
+  pushUndo();
+  config.useFavicon = v;
+  updatePreview();
+}
+
+// リンクの一括操作(選択→カテゴリ移動/削除。SPEC.md §5.2.2)。
+function toggleLinkSelect(c: number, l: number): void {
+  const key = `${c}-${l}`;
+  if (selectedLinks.has(key)) selectedLinks.delete(key);
+  else selectedLinks.add(key);
+  // チェックボックス自体の見た目(checked状態)はブラウザがクリック時点で既に反映済みのため、
+  // renderForm()全体の再構築は行わず、操作バーだけを更新する(スクロール位置の保持・軽量化)。
+  renderBulkActionBar();
+}
+function clearLinkSelection(): void {
+  selectedLinks.clear();
+  // renderForm()全体は行わず(toggleLinkSelect()と同じ理由)、チェックボックスの見た目だけ
+  // 手動で同期する(checked状態はrenderForm()時にselectedLinksから導出しているため)。
+  document.querySelectorAll<HTMLInputElement>(".link-select").forEach((cb) => (cb.checked = false));
+  renderBulkActionBar();
+}
+// 一括操作バーの移動先カテゴリの選択を記憶する(renderForm()の再描画をまたいで保持するため)。
+function updateBulkMoveTarget(v: string): void {
+  bulkMoveTargetCatIdx = Number(v);
+}
+// 選択中のリンクのキー("カテゴリindex-リンクindex")を、カテゴリごとにインデックス降順でグループ化する。
+// 同一カテゴリ内で複数削除/移動する際、小さいindexから処理すると後続のindexがずれてしまうための対策。
+function groupSelectedLinksByCategory(): Map<number, number[]> {
+  const byCat = new Map<number, number[]>();
+  selectedLinks.forEach((key) => {
+    const [c, l] = key.split("-").map(Number);
+    if (!byCat.has(c)) byCat.set(c, []);
+    byCat.get(c)!.push(l);
+  });
+  byCat.forEach((lIdxs) => lIdxs.sort((a, b) => b - a));
+  return byCat;
+}
+function bulkDeleteLinks(): void {
+  if (selectedLinks.size === 0) return;
+  if (!confirm(`選択した${selectedLinks.size}件のリンクを削除しますか?`)) return;
+  // 削除するとindexがずれるため、グループ化は選択状態をクリアする前に行う。
+  const byCat = groupSelectedLinksByCategory();
+  pushUndo();
+  clearLinkSelectionSilently();
+  byCat.forEach((lIdxs, cIdx) => {
+    lIdxs.forEach((lIdx) => config.categories[cIdx].links.splice(lIdx, 1));
+  });
+  linkCheckResults = null;
+  renderForm();
+  updatePreview();
+}
+function bulkMoveLinks(targetCatIdxStr: string): void {
+  const targetCatIdx = Number(targetCatIdxStr);
+  if (selectedLinks.size === 0 || Number.isNaN(targetCatIdx) || !config.categories[targetCatIdx]) return;
+  const byCat = groupSelectedLinksByCategory();
+  pushUndo();
+  clearLinkSelectionSilently();
+  // 移動先での並び順は、選択したカテゴリ・リンクの走査順に依存する(厳密な元の表示順の保持は行わない)。
+  const movedLinks: LinkItem[] = [];
+  byCat.forEach((lIdxs, cIdx) => {
+    lIdxs.forEach((lIdx) => movedLinks.push(config.categories[cIdx].links.splice(lIdx, 1)[0]));
+  });
+  config.categories[targetCatIdx].links.push(...movedLinks);
+  linkCheckResults = null;
   renderForm();
   updatePreview();
 }
@@ -568,6 +726,7 @@ async function saveToServer(): Promise<void> {
           "\n\n「OK」を押すと最新の内容を再取得します。この画面での編集内容は失われます。",
       );
       pushUndo();
+      clearLinkSelectionSilently();
       const loaded = await loadFromServer();
       config = normalizeConfig(loaded);
       linkCheckResults = null;
@@ -641,6 +800,7 @@ function handleImportFile(event: Event): void {
       }
 
       pushUndo();
+      clearLinkSelectionSilently();
       config = normalizeConfig(data.config);
 
       config.categories.forEach((cat: Category) => {
@@ -674,6 +834,7 @@ async function resetToDefault(): Promise<void> {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "リセットに失敗しました");
     pushUndo();
+    clearLinkSelectionSilently();
     currentVersion = parseVersion(res.headers.get("etag"));
     config = normalizeConfig(data);
     linkCheckResults = null;
@@ -697,6 +858,7 @@ function downloadBackup(): void {
 // 保存(saveToServer)するまでデータベースには反映されない。
 function sortAlphabetically(): void {
   pushUndo();
+  clearLinkSelectionSilently();
   config.categories.sort((a, b) => a.name.localeCompare(b.name, "ja"));
   config.categories.forEach((cat) => cat.links.sort((a, b) => a.name.localeCompare(b.name, "ja")));
   linkCheckResults = null;
@@ -759,12 +921,135 @@ interface HistoryEntrySummary {
   changedAt: string;
 }
 
+interface DiffLinkInfo {
+  name: string;
+  url: string;
+  category: string;
+}
+
+interface ConfigDiff {
+  titleChanged: boolean;
+  themeChanged: boolean;
+  // このスナップショットを読み込んだ場合に「なくなる」リンク(現在の設定にのみ存在)
+  removedLinks: DiffLinkInfo[];
+  // このスナップショットを読み込んだ場合に「復元される」リンク(スナップショットにのみ存在)
+  restoredLinks: DiffLinkInfo[];
+  // 名称・所属カテゴリのいずれかが異なるリンク(URLが一致するもの同士で比較)
+  changedLinks: { url: string; current: DiffLinkInfo; snapshot: DiffLinkInfo }[];
+}
+
+// URLごとにリンクをグループ化する。一括インポート時の重複URL警告(§5.2.2)が示すとおり、同じURLの
+// リンクが複数(カテゴリをまたいで)存在する状態は許容されているため、Map<url, 1件>ではなく
+// Map<url, 該当リンクの配列>として、同じURLの重複も取りこぼさないようにする。
+function collectLinksByUrl(c: PortalConfig): Map<string, DiffLinkInfo[]> {
+  const map = new Map<string, DiffLinkInfo[]>();
+  c.categories.forEach((cat) => {
+    cat.links.forEach((link) => {
+      const info = { name: link.name, url: link.url, category: cat.name };
+      const list = map.get(link.url);
+      if (list) list.push(info);
+      else map.set(link.url, [info]);
+    });
+  });
+  return map;
+}
+
+// 現在の設定(current)と変更履歴のスナップショット(snapshot)を比較し、このスナップショットを
+// 読み込んだ場合に生じる差分を算出する(SPEC.md §5.2.2)。リンクはURLをキーに同一性を判定する。
+// 同じURLが複数存在する場合は、両者の該当リンクを順番に対応させ(多重集合としての比較)、
+// 対応する組の所属カテゴリ/名称が異なれば「変更」、どちらか一方にしか対応する組が無ければ
+// 「追加」または「削除」として扱う(厳密にどのリンクとどのリンクが対応するかの一意な判定はできないため、
+// 件数と内容の差分を漏れなく表示することを優先した近似的な比較)。
+function computeConfigDiff(current: PortalConfig, snapshot: PortalConfig): ConfigDiff {
+  const currentLinks = collectLinksByUrl(current);
+  const snapshotLinks = collectLinksByUrl(snapshot);
+  const removedLinks: DiffLinkInfo[] = [];
+  const restoredLinks: DiffLinkInfo[] = [];
+  const changedLinks: ConfigDiff["changedLinks"] = [];
+  const allUrls = new Set([...currentLinks.keys(), ...snapshotLinks.keys()]);
+  allUrls.forEach((url) => {
+    const currentList = currentLinks.get(url) ?? [];
+    const snapshotList = snapshotLinks.get(url) ?? [];
+    const pairCount = Math.min(currentList.length, snapshotList.length);
+    for (let i = 0; i < pairCount; i++) {
+      const cur = currentList[i];
+      const snap = snapshotList[i];
+      if (cur.name !== snap.name || cur.category !== snap.category) {
+        changedLinks.push({ url, current: cur, snapshot: snap });
+      }
+    }
+    for (let i = pairCount; i < currentList.length; i++) removedLinks.push(currentList[i]);
+    for (let i = pairCount; i < snapshotList.length; i++) restoredLinks.push(snapshotList[i]);
+  });
+  return {
+    titleChanged: current.title !== snapshot.title,
+    themeChanged: current.themeColor !== snapshot.themeColor,
+    removedLinks,
+    restoredLinks,
+    changedLinks,
+  };
+}
+
+function renderConfigDiff(diff: ConfigDiff): string {
+  const parts: string[] = [];
+  if (diff.titleChanged) parts.push(`<div class="diff-line diff-changed">✏️ タイトルが変わります</div>`);
+  if (diff.themeChanged) parts.push(`<div class="diff-line diff-changed">✏️ テーマカラーが変わります</div>`);
+  diff.restoredLinks.forEach((l) =>
+    parts.push(`<div class="diff-line diff-added">🟢 復元: ${escapeHtml(l.name)} (${escapeHtml(l.category)})</div>`)
+  );
+  diff.removedLinks.forEach((l) =>
+    parts.push(`<div class="diff-line diff-removed">🔴 削除: ${escapeHtml(l.name)} (${escapeHtml(l.category)})</div>`)
+  );
+  diff.changedLinks.forEach((l) =>
+    parts.push(
+      `<div class="diff-line diff-changed">✏️ 変更: ${escapeHtml(l.current.name)} (${escapeHtml(l.current.category)}) → ${
+        escapeHtml(l.snapshot.name)
+      } (${escapeHtml(l.snapshot.category)})</div>`,
+    )
+  );
+  if (parts.length === 0) return `<div class="diff-line">現在の設定と同じ内容です(リンク・タイトル・テーマカラーに差分はありません)。</div>`;
+  return parts.join("");
+}
+
+// 履歴一覧に表示するキャッシュ(id→取得済みのスナップショット)。同じエントリの差分を
+// 再度開いた際に再取得しないためだけの、このモーダルを開いている間だけの一時的なキャッシュ。
+let historyEntryCache = new Map<number, PortalConfig>();
+
+async function toggleHistoryDiff(id: number): Promise<void> {
+  const panel = document.getElementById(`history-diff-${id}`)!;
+  // 取得に成功して表示済みの場合のみ、再クリックで閉じる(トグル動作)。読み込み中・エラー表示中に
+  // 再クリックした場合は、単に閉じるのではなく再取得を試みる(エラーのまま閉じるしかできず、
+  // 3回目のクリックまで再試行できなくなるのを防ぐため)。
+  if (panel.style.display === "block" && panel.dataset.state === "ok") {
+    panel.style.display = "none";
+    return;
+  }
+  panel.style.display = "block";
+  panel.innerHTML = "読み込み中...";
+  panel.dataset.state = "";
+  try {
+    let snapshot = historyEntryCache.get(id);
+    if (!snapshot) {
+      const res = await fetch(`/api/history/${id}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "変更履歴の取得に失敗しました");
+      snapshot = normalizeConfig((data as { config: PortalConfig }).config);
+      historyEntryCache.set(id, snapshot);
+    }
+    panel.innerHTML = renderConfigDiff(computeConfigDiff(config, snapshot));
+    panel.dataset.state = "ok";
+  } catch (error) {
+    panel.innerHTML = `❌ ${escapeHtml((error as Error).message)}`;
+  }
+}
+
 // 変更履歴パネルを開き、一覧(新しい順)を取得して表示する(SPEC.md §4.7, §5.2.2)。
 async function openHistory(): Promise<void> {
   const modal = document.getElementById("history-modal")!;
   const listEl = document.getElementById("history-list")!;
   listEl.innerHTML = "読み込み中...";
   modal.style.display = "flex";
+  historyEntryCache = new Map();
   try {
     const res = await fetch("/api/history");
     if (!res.ok) throw new Error("変更履歴の取得に失敗しました");
@@ -775,8 +1060,17 @@ async function openHistory(): Promise<void> {
     }
     listEl.innerHTML = data.entries
       .map(
-        (entry) =>
-          `<div class="history-row"><span>${escapeHtml(new Date(entry.changedAt).toLocaleString("ja-JP"))}</span><button class="btn" style="background:#e8f5f0; color:#00a968; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:bold;" onclick="restoreHistory(${entry.id})">この内容を確認</button></div>`,
+        (entry) => `
+        <div class="history-entry">
+          <div class="history-row">
+            <span>${escapeHtml(new Date(entry.changedAt).toLocaleString("ja-JP"))}</span>
+            <div style="display:flex; gap:6px;">
+              <button class="btn" style="background:#f0f0f0; color:#666; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:bold;" onclick="toggleHistoryDiff(${entry.id})">🔍 現在との差分</button>
+              <button class="btn" style="background:#e8f5f0; color:#00a968; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:bold;" onclick="restoreHistory(${entry.id})">この内容を確認</button>
+            </div>
+          </div>
+          <div class="history-diff" id="history-diff-${entry.id}" style="display:none;"></div>
+        </div>`,
       )
       .join("");
   } catch (error) {
@@ -803,6 +1097,7 @@ async function restoreHistory(id: number): Promise<void> {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "変更履歴の取得に失敗しました");
     pushUndo();
+    clearLinkSelectionSilently();
     config = normalizeConfig((data as { config: PortalConfig }).config);
     linkCheckResults = null;
     closeHistory();
@@ -925,6 +1220,14 @@ Object.assign(globalThis, {
   delCat,
   addCat,
   updateLink,
+  updateLinkMemo,
+  updateNewsLabel,
+  toggleUseFavicon,
+  toggleLinkSelect,
+  clearLinkSelection,
+  updateBulkMoveTarget,
+  bulkDeleteLinks,
+  bulkMoveLinks,
   delLink,
   addLink,
   checkLinks,
@@ -938,6 +1241,7 @@ Object.assign(globalThis, {
   openHistory,
   closeHistory,
   restoreHistory,
+  toggleHistoryDiff,
   openBulkImport,
   closeBulkImport,
   applyBulkImport,
