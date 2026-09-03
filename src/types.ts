@@ -21,11 +21,18 @@ export interface LinkItem {
   // サーバーが link_added_at テーブルから付与する、このURLが最初に保存された日時(読み取り専用の
   // 派生情報。ISO 8601形式)。閲覧画面のNEWバッジ表示に使う。PUTの入力として送っても無視される。
   addedAt?: string;
+  // サーバーが link_check_status テーブルから付与する、定期自動チェックで到達不可だったかどうか
+  // (読み取り専用の派生情報)。到達可能、または未チェックの場合は省略される。PUTの入力として
+  // 送っても無視される。
+  broken?: boolean;
 }
 
 export interface Category {
   name: string;
   links: LinkItem[];
+  // 閲覧画面(portal.html)には表示しない「下書き」状態(編集者が管理する共有データ)。
+  // 編集画面では引き続き編集できる。省略時はfalse扱い(公開状態)。
+  hidden?: boolean;
 }
 
 export interface PortalConfig {

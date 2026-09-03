@@ -53,6 +53,9 @@ export function validateConfig(raw: unknown): PortalConfig {
     if (!Array.isArray(cat.links)) {
       throw new Error(`カテゴリ[${i}]のリンクデータが不正です`);
     }
+    if (cat.hidden !== undefined && typeof cat.hidden !== "boolean") {
+      throw new Error(`カテゴリ[${i}]の公開状態の指定が不正です`);
+    }
     cat.links.forEach((link, j) => {
       if (!link || typeof link.name !== "string" || typeof link.icon !== "string") {
         throw new Error(`カテゴリ[${i}]のリンク[${j}]が不正です`);

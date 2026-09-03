@@ -213,11 +213,14 @@ function updatePreview(): void {
       </ul></div>`
     : "";
 
+  // 「下書き」状態のカテゴリは閲覧画面と同じくプレビューにも表示しない(SPEC.md §3.3, §5.1.2)。
+  const visibleCategories = config.categories.filter((cat) => !cat.hidden);
+
   const html = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>${css}</style></head><body>
       <div class="layout"><div class="sidebar"><div><h1>${escapeHtml(config.title)}</h1><div style="font-size:11px; color:#999; margin-bottom:20px;">${new Date().toLocaleDateString("ja-JP")}</div></div>
-      <div style="flex:1;">${config.categories.map((cat) => `<div class="nav-item"><span>${escapeHtml(cat.name)}</span><span class="count">${cat.links.length}</span></div>`).join("")}</div></div>
+      <div style="flex:1;">${visibleCategories.map((cat) => `<div class="nav-item"><span>${escapeHtml(cat.name)}</span><span class="count">${cat.links.length}</span></div>`).join("")}</div></div>
       <div class="main">${newsHtml}
-      ${config.categories.map((cat) => `<div class="cat-head">${escapeHtml(cat.name)}</div><div class="grid">${cat.links.map((l) => `<a class="card"><span class="icon">${escapeHtml(l.icon)}</span><span class="name">${escapeHtml(l.name)}</span></a>`).join("")}</div>`).join("")}
+      ${visibleCategories.map((cat) => `<div class="cat-head">${escapeHtml(cat.name)}</div><div class="grid">${cat.links.map((l) => `<a class="card"><span class="icon">${escapeHtml(l.icon)}</span><span class="name">${escapeHtml(l.name)}</span></a>`).join("")}</div>`).join("")}
       </div></div></body></html>`;
   iframe.srcdoc = html;
 }
@@ -254,7 +257,13 @@ function renderForm(): void {
       </div>`;
 
   config.categories.forEach((cat: Category, cIdx: number) => {
-    let html = `<div class="box" ondragover="onCatDragOver(event)" ondrop="onCatDrop(event, ${cIdx})" style="border-left:4px solid ${config.themeColor}"><div class="box-header"><span class="drag-handle" draggable="true" ondragstart="onCatDragStart(event, ${cIdx})" title="ドラッグして並び替え">⠿</span><input type="text" value="${escapeHtml(cat.name)}" oninput="updateCat(${cIdx}, this.value)" style="font-weight:bold; width:50%;"><div style="display:flex;"><button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, 1)">⬇️</button><button class="btn btn-icon btn-red" style="margin-left:5px;" onclick="delCat(${cIdx})">🗑️</button></div></div>`;
+    const hiddenStyle = cat.hidden ? "opacity:0.55;" : "";
+    const hiddenBtn = cat.hidden
+      ? `<button class="btn btn-icon" style="background:#fff3cd; color:#856404;" title="下書き中(閲覧画面には表示されません)。クリックで公開" onclick="toggleCatHidden(${cIdx})">🙈</button>`
+      : `<button class="btn btn-icon" title="公開中。クリックで下書きにする(閲覧画面から一時的に隠す)" onclick="toggleCatHidden(${cIdx})">👁️</button>`;
+    let html = `<div class="box" ondragover="onCatDragOver(event)" ondrop="onCatDrop(event, ${cIdx})" style="border-left:4px solid ${config.themeColor}; ${hiddenStyle}"><div class="box-header"><span class="drag-handle" draggable="true" ondragstart="onCatDragStart(event, ${cIdx})" title="ドラッグして並び替え">⠿</span><input type="text" value="${escapeHtml(cat.name)}" oninput="updateCat(${cIdx}, this.value)" style="font-weight:bold; width:45%;"><div style="display:flex;">${hiddenBtn}<button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, -1)">⬆️</button><button class="btn btn-icon btn-move" onclick="moveCat(${cIdx}, 1)">⬇️</button><button class="btn btn-icon btn-red" style="margin-left:5px;" onclick="delCat(${cIdx})">🗑️</button></div></div>${
+      cat.hidden ? `<div style="font-size:11px; color:#856404; margin:-6px 0 10px;">🙈 下書き中(閲覧画面には表示されません)</div>` : ""
+    }`;
     cat.links.forEach((link: LinkItem, lIdx: number) => {
       const check = linkCheckResults?.[`${cIdx}-${lIdx}`];
       const checkBadge = !check
@@ -314,6 +323,14 @@ function addNews(): void {
 function updateCat(i: number, v: string): void {
   markTextEdit();
   config.categories[i].name = v;
+  updatePreview();
+}
+// カテゴリの「下書き」状態を切り替える(SPEC.md §3.3, §5.2.2)。下書き中は閲覧画面には表示されない
+// が、編集画面では引き続き編集できる(公開前の準備や、一時的に隠したいカテゴリ向け)。
+function toggleCatHidden(i: number): void {
+  pushUndo();
+  config.categories[i].hidden = !config.categories[i].hidden;
+  renderForm();
   updatePreview();
 }
 function moveCat(i: number, dir: number): void {
@@ -638,6 +655,73 @@ async function resetToDefault(): Promise<void> {
   }
 }
 
+// 現在のデータベースファイル(portal.db)をそのままダウンロードする(SPEC.md §4.9)。
+// 自動バックアップ(§2.3)とは別に、リスクのある変更前に手元へ控えを取る用途を想定している。
+function downloadBackup(): void {
+  window.location.href = "/api/backup/download";
+}
+
+// カテゴリ名・カテゴリ内のリンク名をそれぞれ五十音/アルファベット順に一括で並び替える(SPEC.md §5.2.2)。
+// 保存(saveToServer)するまでデータベースには反映されない。
+function sortAlphabetically(): void {
+  pushUndo();
+  config.categories.sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  config.categories.forEach((cat) => cat.links.sort((a, b) => a.name.localeCompare(b.name, "ja")));
+  linkCheckResults = null;
+  renderForm();
+  updatePreview();
+  updateStorageStatus("🔤 名前順に並び替えました (未保存)");
+}
+
+// アクセス統計モーダルを開き、現在読み込み中のconfig(クリック数を含む)と
+// GET /api/history から集計した簡易統計を表示する(SPEC.md §5.2.2)。新規のAPIは呼ばず、
+// 既存のエンドポイントのデータのみで完結する。
+async function openStats(): Promise<void> {
+  const modal = document.getElementById("stats-modal")!;
+  const body = document.getElementById("stats-body")!;
+  body.innerHTML = "読み込み中...";
+  modal.style.display = "flex";
+  try {
+    const allLinks: LinkItem[] = config.categories.flatMap((cat) => cat.links);
+    const totalClicks = allLinks.reduce((sum, l) => sum + (l.clicks || 0), 0);
+    const topLinks = allLinks
+      .filter((l) => l.clicks)
+      .sort((a, b) => (b.clicks || 0) - (a.clicks || 0))
+      .slice(0, 10);
+
+    const res = await fetch("/api/history");
+    const historyEntries: HistoryEntrySummary[] = res.ok ? (await res.json()).entries : [];
+    const lastChangedText = historyEntries.length > 0
+      ? new Date(historyEntries[0].changedAt).toLocaleString("ja-JP")
+      : "-";
+
+    const tilesHtml = `
+      <div class="stats-summary">
+        <div class="stats-tile"><div class="stats-num">${config.categories.length}</div><div class="stats-label">カテゴリ数</div></div>
+        <div class="stats-tile"><div class="stats-num">${allLinks.length}</div><div class="stats-label">リンク数</div></div>
+        <div class="stats-tile"><div class="stats-num">${totalClicks}</div><div class="stats-label">総クリック数</div></div>
+        <div class="stats-tile"><div class="stats-num">${historyEntries.length}</div><div class="stats-label">保存履歴件数</div></div>
+      </div>
+      <div style="font-size:11px; color:#95a5a6; margin:10px 0;">最終保存: ${escapeHtml(lastChangedText)}</div>`;
+
+    const topLinksHtml = topLinks.length === 0
+      ? `<div class="history-empty">まだクリックされたリンクがありません。</div>`
+      : topLinks
+        .map((l, i) =>
+          `<div class="history-row"><span>${i + 1}. ${escapeHtml(l.icon)} ${escapeHtml(l.name)}</span><span>👁 ${l.clicks}</span></div>`
+        )
+        .join("");
+
+    body.innerHTML = `${tilesHtml}<label>よく使われているリンク TOP10</label>${topLinksHtml}`;
+  } catch (error) {
+    body.innerHTML = `<div class="history-empty">❌ ${escapeHtml((error as Error).message)}</div>`;
+  }
+}
+
+function closeStats(): void {
+  document.getElementById("stats-modal")!.style.display = "none";
+}
+
 interface HistoryEntrySummary {
   id: number;
   changedAt: string;
@@ -777,6 +861,7 @@ Object.assign(globalThis, {
   delNews,
   addNews,
   updateCat,
+  toggleCatHidden,
   moveCat,
   moveLink,
   onCatDragStart,
@@ -798,12 +883,16 @@ Object.assign(globalThis, {
   importJSON,
   handleImportFile,
   resetToDefault,
+  downloadBackup,
+  sortAlphabetically,
   openHistory,
   closeHistory,
   restoreHistory,
   openBulkImport,
   closeBulkImport,
   applyBulkImport,
+  openStats,
+  closeStats,
   undo,
   redo,
 });
