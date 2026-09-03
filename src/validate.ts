@@ -6,6 +6,7 @@
 import type { PortalConfig } from "./types.ts";
 
 const HEX_COLOR_RE = /^#[0-9A-Fa-f]{6}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // portal.html の sanitizeUrl() と同じ基準で検証する
 export function isValidUrl(url: unknown): boolean {
@@ -34,6 +35,14 @@ export function validateConfig(raw: unknown): PortalConfig {
   news.forEach((item, i) => {
     if (!item || typeof item.date !== "string" || typeof item.text !== "string") {
       throw new Error(`お知らせ[${i}]の形式が不正です`);
+    }
+    if (item.pinned !== undefined && typeof item.pinned !== "boolean") {
+      throw new Error(`お知らせ[${i}]のピン留め指定が不正です`);
+    }
+    if (item.expiresAt !== undefined && item.expiresAt !== null && item.expiresAt !== "") {
+      if (typeof item.expiresAt !== "string" || !DATE_RE.test(item.expiresAt)) {
+        throw new Error(`お知らせ[${i}]の有効期限の形式が不正です (例: 2026-12-31)`);
+      }
     }
   });
 

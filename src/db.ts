@@ -33,7 +33,9 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,
     text TEXT NOT NULL,
-    sort_order INTEGER NOT NULL
+    sort_order INTEGER NOT NULL,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS categories (
@@ -59,6 +61,13 @@ db.exec(`
     count INTEGER NOT NULL DEFAULT 0
   );
 
+  -- リンクURLが最初に保存された日時。閲覧画面のNEWバッジ表示に使う(SPEC.md §5.1.2)。
+  -- link_clicksと同じ理由でURL文字列をキーにし、一度記録した日時はPUTで内容が変わっても更新しない。
+  CREATE TABLE IF NOT EXISTS link_added_at (
+    url TEXT PRIMARY KEY,
+    added_at TEXT NOT NULL
+  );
+
   -- 設定が保存されるたびのスナップショット。誰が変更したかは記録しない(認証機能がないため)。
   CREATE TABLE IF NOT EXISTS change_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,6 +80,15 @@ db.exec(`
 const settingsColumns = db.prepare("PRAGMA table_info(settings)").all<{ name: string }>();
 if (!settingsColumns.some((c) => c.name === "version")) {
   db.exec("ALTER TABLE settings ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
+}
+
+// 旧スキーマ(pinned/expires_at列なし)で作成済みのDBに対する軽量マイグレーション
+const newsColumns = db.prepare("PRAGMA table_info(news)").all<{ name: string }>();
+if (!newsColumns.some((c) => c.name === "pinned")) {
+  db.exec("ALTER TABLE news ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+}
+if (!newsColumns.some((c) => c.name === "expires_at")) {
+  db.exec("ALTER TABLE news ADD COLUMN expires_at TEXT");
 }
 
 const MAX_HISTORY_ENTRIES = 50;
@@ -111,17 +129,46 @@ export function recordClick(url: string): void {
   ).run(url);
 }
 
+// URLごとの最初に保存された日時。キーはlinksテーブルと同じURL文字列。
+function getAddedAtMap(): Record<string, string> {
+  const rows = db.prepare("SELECT url, added_at AS addedAt FROM link_added_at").all<
+    { url: string; addedAt: string }
+  >();
+  const result: Record<string, string> = {};
+  rows.forEach((row) => {
+    result[row.url] = row.addedAt;
+  });
+  return result;
+}
+
+interface NewsRow {
+  date: string;
+  text: string;
+  pinned: number;
+  expiresAt: string | null;
+}
+
 export function getConfig(): PortalConfig | null {
   const settings = db
     .prepare("SELECT title, theme_color AS themeColor FROM settings WHERE id = 1")
     .get<SettingsRow>();
   if (!settings) return null;
 
-  const news = db
-    .prepare("SELECT date, text FROM news ORDER BY sort_order ASC, id ASC")
-    .all<NewsItem>();
+  const news: NewsItem[] = db
+    .prepare(
+      "SELECT date, text, pinned, expires_at AS expiresAt FROM news " +
+        "ORDER BY pinned DESC, sort_order ASC, id ASC",
+    )
+    .all<NewsRow>()
+    .map((row) => ({
+      date: row.date,
+      text: row.text,
+      ...(row.pinned ? { pinned: true } : {}),
+      ...(row.expiresAt ? { expiresAt: row.expiresAt } : {}),
+    }));
 
   const clickCounts = getClickCounts();
+  const addedAtMap = getAddedAtMap();
 
   const categories: Category[] = db
     .prepare("SELECT id, name FROM categories ORDER BY sort_order ASC, id ASC")
@@ -134,7 +181,12 @@ export function getConfig(): PortalConfig | null {
         .all<LinkItem>(cat.id)
         .map((link) => {
           const clicks = clickCounts[link.url];
-          return clicks ? { ...link, clicks } : link;
+          const addedAt = addedAtMap[link.url];
+          return {
+            ...link,
+            ...(clicks ? { clicks } : {}),
+            ...(addedAt ? { addedAt } : {}),
+          };
         });
       return { name: cat.name, links };
     });
@@ -163,8 +215,12 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
   ).run(config.title, config.themeColor, nextVersion);
 
   db.exec("DELETE FROM news");
-  const insertNews = db.prepare("INSERT INTO news (date, text, sort_order) VALUES (?, ?, ?)");
-  config.news.forEach((item, idx) => insertNews.run(item.date, item.text, idx));
+  const insertNews = db.prepare(
+    "INSERT INTO news (date, text, sort_order, pinned, expires_at) VALUES (?, ?, ?, ?, ?)",
+  );
+  config.news.forEach((item, idx) =>
+    insertNews.run(item.date, item.text, idx, item.pinned ? 1 : 0, item.expiresAt || null)
+  );
 
   db.exec("DELETE FROM links");
   db.exec("DELETE FROM categories");
@@ -172,11 +228,16 @@ const runReplace = db.transaction((config: PortalConfig, expectedVersion?: numbe
   const insertLink = db.prepare(
     "INSERT INTO links (category_id, name, url, icon, sort_order) VALUES (?, ?, ?, ?, ?)",
   );
+  const insertAddedAt = db.prepare(
+    "INSERT INTO link_added_at (url, added_at) VALUES (?, ?) ON CONFLICT(url) DO NOTHING",
+  );
+  const now = new Date().toISOString();
   config.categories.forEach((cat, cIdx) => {
     insertCategory.run(cat.name, cIdx);
     const categoryId = db.lastInsertRowId;
     cat.links.forEach((link, lIdx) => {
       insertLink.run(categoryId, link.name, link.url, link.icon, lIdx);
+      insertAddedAt.run(link.url, now);
     });
   });
 

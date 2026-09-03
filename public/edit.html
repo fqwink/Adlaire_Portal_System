@@ -54,6 +54,18 @@
   .drag-handle:hover { color: #00a968; }
   .drag-handle:active { cursor: grabbing; }
 
+  .btn-pin { opacity: 0.35; }
+  .btn-pin.active { opacity: 1; background: #fff3cd; }
+  .news-sub-row { margin-top: -4px; margin-bottom: 12px; padding-left: 40px; gap: 6px; }
+
+  select, textarea {
+    width: 100%; padding: 10px; border: 1px solid #ced4da; border-radius: 6px; box-sizing: border-box;
+    font-size: 13px; font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 100px; }
+  .undo-redo-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .undo-redo-row .btn { flex: 1; background: #f0f4f8; color: #34495e; padding: 8px; border-radius: 8px; font-weight: bold; font-size: 13px; }
+
   .modal-overlay {
     display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000;
     align-items: center; justify-content: center;
@@ -75,11 +87,15 @@
 
 <div class="editor-panel" id="editorPanel">
   <div class="editor-header">
-    <h2>🛠️ 設定エディタ <span class="badge">Adlaire v0.19</span></h2>
+    <h2>🛠️ 設定エディタ <span class="badge">Adlaire v0.20</span></h2>
     <div style="font-size: 11px; color: #95a5a6; margin-top: 5px;" id="storage-status">🗄️ データベースに接続中...</div>
   </div>
   <div class="editor-content" id="form-area">読み込み中...</div>
   <div class="editor-footer">
+    <div class="undo-redo-row">
+      <button class="btn" onclick="undo()" title="元に戻す (Ctrl+Z)">↩️ 元に戻す</button>
+      <button class="btn" onclick="redo()" title="やり直す (Ctrl+Shift+Z)">↪️ やり直す</button>
+    </div>
     <button class="btn btn-save" onclick="saveToServer()" style="margin-bottom: 10px;" disabled id="save-btn">💾 保存 (データベースに保存)</button>
     <div style="display: flex; gap: 10px; margin-bottom: 10px;">
       <button class="btn" onclick="exportJSON()" style="flex: 1; background: #3498db; color: white; padding: 10px; border-radius: 8px; font-weight: bold;">📤 エクスポート (JSON)</button>
@@ -87,9 +103,10 @@
     </div>
     <button class="btn" id="check-links-btn" onclick="checkLinks()" style="background: #f0f4f8; color: #34495e; padding: 8px; border-radius: 8px; font-weight: bold; width: 100%; margin-top: 10px;">🔗 リンクをチェック</button>
     <button class="btn" onclick="openHistory()" style="background: #f0f4f8; color: #34495e; padding: 8px; border-radius: 8px; font-weight: bold; width: 100%; margin-top: 10px;">📜 変更履歴</button>
+    <button class="btn" onclick="openBulkImport()" style="background: #f0f4f8; color: #34495e; padding: 8px; border-radius: 8px; font-weight: bold; width: 100%; margin-top: 10px;">📋 一括インポート</button>
     <button class="btn" onclick="resetToDefault()" style="background: #e74c3c22; color: #e74c3c; padding: 8px; border-radius: 8px; font-weight: bold; width: 100%; margin-top: 10px;">🔄 デフォルトに戻す</button>
     <input type="file" id="import-file" accept=".json" style="display: none;" onchange="handleImportFile(event)">
-    <div class="version-info">Adlaire Portal System v0.19 (Deno + TypeScript + SQLite)<br>© 2026 All Rights Reserved</div>
+    <div class="version-info">Adlaire Portal System v0.20 (Deno + TypeScript + SQLite)<br>© 2026 All Rights Reserved</div>
   </div>
 </div>
 <div class="resizer" id="dragHandle"></div>
@@ -102,6 +119,19 @@
   <div class="modal-box">
     <div class="modal-header"><h3>📜 変更履歴</h3><button class="modal-close" onclick="closeHistory()">✕</button></div>
     <div class="modal-body" id="history-list"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="bulk-import-modal">
+  <div class="modal-box">
+    <div class="modal-header"><h3>📋 一括インポート</h3><button class="modal-close" onclick="closeBulkImport()">✕</button></div>
+    <div class="modal-body">
+      <label>追加先カテゴリ</label>
+      <select id="bulk-import-category"></select>
+      <label>リンク一覧(1行に1件、「名称, URL」の形式。タブ区切りの貼り付けにも対応)</label>
+      <textarea id="bulk-import-text" placeholder="Google, https://google.com&#10;Yahoo, https://yahoo.co.jp"></textarea>
+      <button class="btn btn-blue" onclick="applyBulkImport()" style="margin-top: 12px;">＋ まとめて追加</button>
+    </div>
   </div>
 </div>
 
