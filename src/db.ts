@@ -23,7 +23,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     title TEXT NOT NULL,
-    theme_color TEXT NOT NULL
+    theme_color TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1
   );
 
   CREATE TABLE IF NOT EXISTS news (
@@ -49,6 +50,12 @@ db.exec(`
   );
 `);
 
+// 旧スキーマ(version列なし)で作成済みのDBに対する軽量マイグレーション
+const settingsColumns = db.prepare("PRAGMA table_info(settings)").all<{ name: string }>();
+if (!settingsColumns.some((c) => c.name === "version")) {
+  db.exec("ALTER TABLE settings ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
+}
+
 interface SettingsRow {
   title: string;
   themeColor: string;
@@ -56,6 +63,15 @@ interface SettingsRow {
 interface CategoryRow {
   id: number;
   name: string;
+}
+
+// PUT /api/config が If-Match ヘッダーで指定したバージョンと現在のDBの内容が
+// 一致しない場合に投げる。楽観的排他制御(SPEC.md §4.2)のためのエラー型。
+export class VersionConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "VersionConflictError";
+  }
 }
 
 export function getConfig(): PortalConfig | null {
@@ -83,11 +99,25 @@ export function getConfig(): PortalConfig | null {
   return { title: settings.title, themeColor: settings.themeColor, news, categories };
 }
 
-const runReplace = db.transaction((config: PortalConfig) => {
+// 現在の設定バージョン(楽観的排他制御用)。設定データが未作成の場合は null。
+export function getVersion(): number | null {
+  const row = db.prepare("SELECT version FROM settings WHERE id = 1").get<{ version: number }>();
+  return row ? row.version : null;
+}
+
+const runReplace = db.transaction((config: PortalConfig, expectedVersion?: number) => {
+  const current = db.prepare("SELECT version FROM settings WHERE id = 1").get<{ version: number }>();
+  if (expectedVersion !== undefined && current !== undefined && current.version !== expectedVersion) {
+    throw new VersionConflictError(
+      "他の変更によってこの設定は更新されています。最新の内容を再取得してから保存し直してください。",
+    );
+  }
+  const nextVersion = current ? current.version + 1 : 1;
+
   db.prepare(
-    "INSERT INTO settings (id, title, theme_color) VALUES (1, ?, ?) " +
-      "ON CONFLICT(id) DO UPDATE SET title = excluded.title, theme_color = excluded.theme_color",
-  ).run(config.title, config.themeColor);
+    "INSERT INTO settings (id, title, theme_color, version) VALUES (1, ?, ?, ?) " +
+      "ON CONFLICT(id) DO UPDATE SET title = excluded.title, theme_color = excluded.theme_color, version = excluded.version",
+  ).run(config.title, config.themeColor, nextVersion);
 
   db.exec("DELETE FROM news");
   const insertNews = db.prepare("INSERT INTO news (date, text, sort_order) VALUES (?, ?, ?)");
@@ -108,9 +138,9 @@ const runReplace = db.transaction((config: PortalConfig) => {
   });
 });
 
-export function replaceConfig(raw: unknown): PortalConfig {
+export function replaceConfig(raw: unknown, expectedVersion?: number): PortalConfig {
   const config = validateConfig(raw);
-  runReplace(config);
+  runReplace(config, expectedVersion);
   return getConfig()!;
 }
 
