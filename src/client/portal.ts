@@ -4,10 +4,37 @@
 /// <reference lib="dom" />
 /// <reference lib="dom.iterable" />
 
-import type { Category, PortalConfig } from "../types.ts";
+import type { Category, PortalConfig, WeatherInfo } from "../types.ts";
 
 // リンクの追加からこの日数以内はNEWバッジを表示する(SPEC.md §5.1.2)。
 const NEW_BADGE_DAYS = 7;
+
+// WMO Weather interpretation codeを絵文字に変換する(Open-Meteo。SPEC.md §2.5)。
+function weatherEmoji(code: number): string {
+  if (code === 0) return "☀️";
+  if (code <= 3) return "⛅";
+  if (code === 45 || code === 48) return "🌫️";
+  if (code >= 51 && code <= 67) return "🌧️";
+  if (code >= 71 && code <= 77) return "❄️";
+  if (code >= 80 && code <= 82) return "🌦️";
+  if (code >= 85 && code <= 86) return "🌨️";
+  if (code >= 95) return "⛈️";
+  return "🌡️";
+}
+
+// サイドバーの天気ウィジェットを更新する。地点未設定・取得失敗・データ欠落のいずれの場合も、
+// ウィジェット自体を表示しないことでエラーを目立たせない(付随情報のため。SPEC.md §5.1.2)。
+function renderWeather(weather: WeatherInfo): void {
+  const el = document.getElementById("weather-widget")!;
+  if (!weather.location || weather.tempC === null || weather.weatherCode === null) {
+    el.style.display = "none";
+    return;
+  }
+  el.style.display = "flex";
+  el.innerHTML = `<span class="weather-icon">${weatherEmoji(weather.weatherCode)}</span>` +
+    `<span class="weather-temp">${Math.round(weather.tempC)}°C</span>` +
+    `<span class="weather-place">${escapeHtml(weather.resolvedName || weather.location)}</span>`;
+}
 
 function hexToRgb(hex: string): string | null {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -238,4 +265,15 @@ fetch("/api/config")
   .catch((err) => {
     console.error("❌ 設定データの読み込みエラー:", err);
     document.getElementById("error-area")!.style.display = "block";
+  });
+
+// 天気情報(外部API連携。SPEC.md §2.5)を取得して表示。付随情報のため、設定データの取得とは
+// 独立して失敗を扱う(失敗してもウィジェットを表示しないだけで、閲覧画面全体には影響させない)。
+fetch("/api/weather")
+  .then((res) => (res.ok ? res.json() : null))
+  .then((weather: WeatherInfo | null) => {
+    if (weather) renderWeather(weather);
+  })
+  .catch(() => {
+    // 表示しないだけで十分なため、エラー内容は無視する
   });

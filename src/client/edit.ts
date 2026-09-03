@@ -253,6 +253,7 @@ function renderForm(): void {
       <div class="box">
         <label>タイトル</label><input type="text" value="${escapeHtml(config.title)}" oninput="update('title', this.value)">
         <label>テーマカラー</label><input type="color" value="${config.themeColor || "#00a968"}" oninput="update('themeColor', this.value)">
+        <label>🌤️ 天気表示の地点(空欄で非表示。例: Tokyo)</label><input type="text" value="${escapeHtml(config.weatherLocation || "")}" placeholder="例: Tokyo" oninput="update('weatherLocation', this.value)">
       </div>
       <div class="box">
         <label>📢 お知らせリスト</label>
@@ -286,7 +287,7 @@ function renderForm(): void {
   formArea.innerHTML += `<button class="btn" style="width:100%; padding:15px; border:2px dashed #ccc; color:#666; font-weight:bold;" onclick="addCat()">＋ 新しいカテゴリを追加</button>`;
 }
 
-function update(k: "title" | "themeColor", v: string): void {
+function update(k: "title" | "themeColor" | "weatherLocation", v: string): void {
   markTextEdit();
   config[k] = v;
   updatePreview();

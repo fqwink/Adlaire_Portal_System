@@ -38,6 +38,12 @@ BACKUP_INTERVAL_MINUTES=30 deno task start
 LINK_CHECK_INTERVAL_MINUTES=120 deno task start
 ```
 
+天気情報（外部API連携。後述）の更新間隔（既定30分）を変更したい場合は `WEATHER_REFRESH_MINUTES` 環境変数を
+指定してください（`0`を指定すると無効化できます）。
+```bash
+WEATHER_REFRESH_MINUTES=60 deno task start
+```
+
 Denoのインストールがまだの場合:
 ```bash
 curl -fsSL https://deno.land/install.sh | sh
@@ -76,6 +82,9 @@ deno --version   # v2.9以上推奨
 お知らせは📌ボタンで常に先頭表示（ピン留め）にでき、有効期限を設定すると期限を過ぎた時点で閲覧画面から
 自動的に非表示になります。また、直近7日以内に追加されたリンクには閲覧画面で「NEW」バッジが、サーバーの
 定期自動チェックで到達できなかったリンクには⚠️バッジが表示されます。
+「🌤️ 天気表示の地点」欄に地点名（例: `Tokyo`）を入力して保存すると、サーバーが外部API（Open-Meteo、
+APIキー不要）から天気情報を取得し、閲覧画面のサイドバーに気温・天気アイコン・地点名を表示します
+（空欄で保存すると非表示に戻ります）。
 
 操作の詳細（各ボタンの挙動、バリデーション仕様など）は [`SPEC.md`](./SPEC.md) の「5. 画面仕様」を参照してください。
 
@@ -126,7 +135,7 @@ A. `jsr:@db/sqlite`（Deno組み込みではなくFFIベースのSQLiteライブ
 このシステムは独自開発のため、自由にカスタマイズ・配布できます。
 
 ## ℹ️ バージョン情報
-- **Version**: v0.22
+- **Version**: v0.23
 - **Name**: Adlaire Portal System
 
 バージョン番号の付け方（累積連番`v0.N`・安定版`vX.Y`）は [`SPEC.md`](./SPEC.md) の「1.4 バージョニング方針」、
@@ -135,5 +144,5 @@ A. `jsr:@db/sqlite`（Deno組み込みではなくFFIベースのSQLiteライブ
 
 ---
 
-**Adlaire Portal System** v0.22
+**Adlaire Portal System** v0.23
 © 2026 All Rights Reserved
