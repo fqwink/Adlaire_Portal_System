@@ -94,12 +94,12 @@ A. いいえ、不要です。`public/` ディレクトリの中身は純粋な�
 このシステムは独自開発のため、自由にカスタマイズ・配布できます。
 
 ## ℹ️ バージョン情報
-- **Version**: 4.1
+- **Version**: 4.2
 - **Name**: Adlaire Portal System
 
 変更履歴は [`SPEC.md`](./SPEC.md) の「10. 変更履歴」に記載しています。
 
 ---
 
-**Adlaire Portal System** v4.1
+**Adlaire Portal System** v4.2
 © 2026 All Rights Reserved
